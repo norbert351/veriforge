@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --vf-magenta: #d81b60;
+  --vf-dark: #0a0a14;
+  --vf-surface: #131322;
+}
+
+body {
+  background: var(--vf-dark);
+  color: #f5f5fa;
+  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
