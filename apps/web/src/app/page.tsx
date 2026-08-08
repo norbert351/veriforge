@@ -49,7 +49,7 @@ const RWATOKEN_ABI = [
   "function balanceOf(address) view returns (uint256)",
   "function pricePerToken() view returns (uint256)",
 ];
-const DISTRIBUTOR_ABI = ["function claim() returns (uint256)", "function claimable(address) view returns (uint256)"];
+const DISTRIBUTOR_ABI = ["function claim() returns (uint256)", "function claimable(address) view returns (uint256)", "function deposit(uint256)"];
 const ERC20_ABI = ["function approve(address,uint256)", "function allowance(address,address) view returns (uint256)", "function transfer(address,uint256)"];
 
 // EIP-712 domain/types for x402 exact-scheme signing (mirrors the API gate).
@@ -330,6 +330,45 @@ export default function Home() {
     [address, loadClaimables]
   );
 
+  const depositRevenue = useCallback(
+    async (iss: Issuance, usdtAmount: string) => {
+      const eth = getEth();
+      if (!eth || !address) {
+        setError("Connect wallet first");
+        return;
+      }
+      setBusy(true);
+      setError("");
+      setNotice("");
+      try {
+        const provider = new BrowserProvider(eth);
+        const signer = await provider.getSigner();
+        const amount = parseUnits(usdtAmount, 6);
+
+        // approve USDT to the distributor, then deposit
+        const usdt = new Contract(USDT, ERC20_ABI, signer);
+        const allowance = await usdt.allowance(address, iss.distributor);
+        if (allowance < amount) {
+          const tx = await usdt.approve(iss.distributor, amount);
+          await tx.wait();
+          setNotice("USDT approved. Confirm the deposit transaction.");
+        }
+
+        const distributor = new Contract(iss.distributor, DISTRIBUTOR_ABI, signer);
+        const tx = await distributor.deposit(amount);
+        await tx.wait();
+        setNotice(`Deposited ${usdtAmount} USDT revenue into ${iss.symbol}. Holders can claim their share now.`);
+        loadIssuances();
+        setTimeout(loadClaimables, 500);
+      } catch (e: any) {
+        setError(e?.reason || e?.shortMessage || e?.message || "Deposit failed");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [address, loadIssuances, loadClaimables]
+  );
+
   const balanceHint = useCallback(async (iss: Issuance): Promise<string> => {
     const eth = getEth();
     if (!eth || !address) return "";
@@ -433,6 +472,7 @@ export default function Home() {
                 claimable={claimables[iss.id]}
                 onBuy={(amt) => buyUnits(iss, amt)}
                 onClaim={() => claimRevenue(iss)}
+                onDeposit={(amt) => depositRevenue(iss, amt)}
                 balanceHint={balanceHint}
               />
             ))}
@@ -452,15 +492,18 @@ function IssuanceCard({
   claimable,
   onBuy,
   onClaim,
+  onDeposit,
   balanceHint,
 }: {
   iss: Issuance;
   claimable?: string;
   onBuy: (amt: string) => void;
   onClaim: () => void;
+  onDeposit: (amt: string) => void;
   balanceHint: (iss: Issuance) => Promise<string>;
 }) {
   const [amount, setAmount] = useState("10");
+  const [depositAmt, setDepositAmt] = useState("50");
   const [units, setUnits] = useState("");
 
   useEffect(() => {
@@ -510,6 +553,15 @@ function IssuanceCard({
             Claim {claimable} USDT
           </button>
         )}
+      </div>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 10, paddingTop: 10, borderTop: "1px dashed #23233a" }}>
+        <span style={{ fontSize: "0.75rem", color: "#9ca3af", whiteSpace: "nowrap" }}>Issuer · deposit revenue</span>
+        <input value={depositAmt} onChange={(e) => setDepositAmt(e.target.value)} type="number" step="0.01" min="0" style={{ ...inputStyle, maxWidth: 110 }} />
+        <span style={{ fontSize: "0.8rem", color: "#9ca3af" }}>USDT</span>
+        <button onClick={() => onDeposit(depositAmt)} style={btnStyle({ outline: true })}>
+          Deposit
+        </button>
+        <span style={{ fontSize: "0.75rem", color: "#6b7280" }}>→ pro-rata to holders</span>
       </div>
     </div>
   );
