@@ -10,9 +10,15 @@
     "test:contracts": "npm run test -w packages/contracts",
     "deploy:bot": "npm run deploy:bot -w packages/contracts"
   },
-  "workspaces": ["packages/*", "apps/*"],
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "devDependencies": {
     "concurrently": "^8.2.2",
     "typescript": "^5.5.0"
+  },
+  "dependencies": {
+    "next": "15.5.22"
   }
 }

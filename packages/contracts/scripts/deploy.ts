@@ -7,44 +7,57 @@ async function main() {
   console.log("Deployer:", deployer.address);
   console.log("Chain:", network.name, "chainId", (await ethers.provider.getNetwork()).chainId);
 
-  if (!process.env.VERIFIER_ADDRESS) {
-    console.warn("VERIFIER_ADDRESS not set — using deployer as verifier");
-  }
   const verifier = process.env.VERIFIER_ADDRESS || deployer.address;
+  console.log("Verifier (AI backend signer):", verifier);
 
-  const Factory = await ethers.getContractFactory("AttestationRegistry");
-  const registry = await Factory.deploy(verifier);
-  await registry.waitForDeployment();
-  const addr = await registry.getAddress();
+  // 1. AttestationRegistry — where the AI backend stores APPROVED verdicts
+  const AR = await ethers.getContractFactory("AttestationRegistry");
+  const attestations = await AR.deploy(verifier);
+  await attestations.waitForDeployment();
+  const attestationsAddr = await attestations.getAddress();
+  console.log("AttestationRegistry:", attestationsAddr);
 
-  console.log("AttestationRegistry deployed at:", addr);
-  console.log("Verifier:", verifier);
+  // 2. IssuanceRegistry — enforces the gate: only APPROVED tokens get listed
+  const IR = await ethers.getContractFactory("IssuanceRegistry");
+  const issuances = await IR.deploy(verifier, attestationsAddr);
+  await issuances.waitForDeployment();
+  const issuancesAddr = await issuances.getAddress();
+  console.log("IssuanceRegistry:", issuancesAddr);
 
-  // Verify on BOTScan (works when BOTSCAN_API_KEY is set)
+  // 3. Verify on BOTScan when an API key is set
   if (process.env.BOTSCAN_API_KEY) {
-    try {
-      await run("verify:verify", {
-        address: addr,
-        constructorArguments: [verifier],
-      });
-      console.log("Contract verified on BOTScan");
-    } catch (e: any) {
-      console.warn("Verification skipped:", e?.message || e);
+    for (const [addr, args] of [
+      [attestationsAddr, [verifier]],
+      [issuancesAddr, [verifier, attestationsAddr]],
+    ] as [string, any[]][]) {
+      try {
+        await run("verify:verify", { address: addr, constructorArguments: args });
+        console.log("Verified on BOTScan:", addr);
+      } catch (e: any) {
+        console.warn("Verification skipped:", e?.message || e);
+      }
     }
   }
 
-  // Write address to a shared file for the API/frontend
   const fs = require("fs");
   const path = require("path");
   const out = path.join(__dirname, "../../shared/contract-addresses.json");
   fs.mkdirSync(path.dirname(out), { recursive: true });
-  fs.writeFileSync(out, JSON.stringify({
-    chainId: 677,
-    registry: addr,
-    verifier,
-    deployedAt: new Date().toISOString(),
-  }, null, 2));
-  console.log("Address written to", out);
+  fs.writeFileSync(
+    out,
+    JSON.stringify(
+      {
+        chainId: 677,
+        attestationRegistry: attestationsAddr,
+        issuanceRegistry: issuancesAddr,
+        verifier,
+        deployedAt: new Date().toISOString(),
+      },
+      null,
+      2
+    )
+  );
+  console.log("Addresses written to", out);
 }
 
 main().catch((e) => {

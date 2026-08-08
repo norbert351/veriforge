@@ -18,6 +18,10 @@ const config: HardhatUserConfig = {
     hardhat: {
       chainId: 677,
     },
+    localhost: {
+      url: "http://127.0.0.1:8545",
+      chainId: 677,
+    },
     botchain: {
       url: process.env.BOT_RPC || "https://rpc.botchain.ai",
       accounts: PRIVATE_KEY ? [PRIVATE_KEY] : [],

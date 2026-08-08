@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { BrowserProvider } from "ethers";
+import { BrowserProvider, Contract, parseUnits, formatUnits } from "ethers";
 
 // BOT Chain mainnet
 const BOT_CHAIN_ID = 677;
@@ -15,25 +15,42 @@ const TARGET_NET = {
 } as const;
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+const USDT = process.env.NEXT_PUBLIC_USDT || "0xaBabc7Ddc03e501d190C676BF3d92ef0e6e87a3C";
 
-type Verdict = 0 | 1 | 2;
+interface Issuance {
+  id: number;
+  issuer: string;
+  token: string;
+  distributor: string;
+  name: string;
+  symbol: string;
+  pricePerTokenUsdt: string;
+  totalSupply: string;
+  docsUri: string;
+  accDividendPerToken: string;
+  listedAt: number;
+  blockNumber: number;
+  explorer: string;
+}
 
-interface AuditResult {
-  target: string;
+interface Dossier {
   score: number;
-  verdict: Verdict;
-  summary: string;
+  verdict: number;
   findings: { id: string; severity: string; title: string; detail: string }[];
-  checks: { name: string; ok: boolean; detail: string }[];
-  onChain?: { stored: boolean; txHash?: string; explorer?: string; reason?: string };
+  summary: string;
+  model: string;
 }
 
 const VERDICT_LABEL: Record<number, string> = { 0: "BLOCKED", 1: "CAUTION", 2: "APPROVED" };
-const VERDICT_COLOR: Record<number, string> = {
-  0: "#f43f5e",
-  1: "#f59e0b",
-  2: "#10b981",
-};
+const VERDICT_COLOR: Record<number, string> = { 0: "#f43f5e", 1: "#f59e0b", 2: "#10b981" };
+
+const RWATOKEN_ABI = [
+  "function buy(uint256 usdtAmount) returns (uint256)",
+  "function balanceOf(address) view returns (uint256)",
+  "function pricePerToken() view returns (uint256)",
+];
+const DISTRIBUTOR_ABI = ["function claim() returns (uint256)", "function claimable(address) view returns (uint256)"];
+const ERC20_ABI = ["function approve(address,uint256)", "function allowance(address,address) view returns (uint256)"];
 
 function getEth() {
   if (typeof window === "undefined") return null;
@@ -43,11 +60,23 @@ function getEth() {
 export default function Home() {
   const [address, setAddress] = useState<string | null>(null);
   const [chainId, setChainId] = useState<number | null>(null);
-  const [target, setTarget] = useState("");
+  const [tab, setTab] = useState<"launch" | "market">("market");
+
+  // issuer form
+  const [fName, setFName] = useState("");
+  const [fSymbol, setFSymbol] = useState("");
+  const [fPrice, setFPrice] = useState("");
+  const [fDocs, setFDocs] = useState("");
+  const [fDocsUri, setFDocsUri] = useState("");
+  const [launching, setLaunching] = useState(false);
+  const [launchResult, setLaunchResult] = useState<any>(null);
+
+  // market
+  const [issuances, setIssuances] = useState<Issuance[]>([]);
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<AuditResult | null>(null);
   const [error, setError] = useState("");
-  const [checked, setChecked] = useState<{ target: string; result: AuditResult } | null>(null);
+  const [notice, setNotice] = useState("");
+  const [claimables, setClaimables] = useState<Record<number, string>>({});
 
   const connect = useCallback(async () => {
     const eth = getEth();
@@ -90,62 +119,172 @@ export default function Home() {
     };
   }, []);
 
-  const runVerify = useCallback(async () => {
-    if (!target) return;
-    setBusy(true);
-    setError("");
-    setResult(null);
-    try {
-      // Step 1: probe the x402 gate (free GET-like call via POST without signature returns 402 challenge)
-      const probe = await fetch(`${API}/v1/verify-rwa`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target }),
-      });
-      if (probe.status !== 402) {
-        const body = await probe.json();
-        setResult(body);
-        setChecked({ target, result: body });
-        return;
-      }
-      // Step 2: paywall challenge received — surface it for now (web3 x402 client is the next layer)
-      const challenge = probe.headers.get("payment-required") || "";
-      setError(
-        `Payment required: 0.5 USDT on BOT Chain. x402 web checkout is being wired — the API accepts PAYMENT-SIGNATURE headers. Challenge: ${challenge.slice(0, 60)}...`
-      );
-    } catch (e: any) {
-      setError(e?.message || "Request failed");
-    } finally {
-      setBusy(false);
-    }
-  }, [target]);
-
-  const lookup = useCallback(async (addr: string) => {
+  const loadIssuances = useCallback(async () => {
     setBusy(true);
     setError("");
     try {
-      const res = await fetch(`${API}/v1/attestations/${addr}`);
-      if (res.status === 404) {
-        setError("No attestation on-chain for this address yet. Run a verification.");
-        return;
-      }
-      const body = await res.json();
-      setChecked({ target: addr, result: { ...body, findings: [], checks: [] } });
+      const res = await fetch(`${API}/v1/issuances`);
+      if (!res.ok) throw new Error(`API ${res.status}`);
+      const data = await res.json();
+      setIssuances(data.issuances || []);
     } catch (e: any) {
-      setError(e?.message || "Lookup failed");
+      setError(e?.message || "Failed to load issuances");
     } finally {
       setBusy(false);
     }
   }, []);
 
+  useEffect(() => {
+    loadIssuances();
+  }, [loadIssuances]);
+
+  const loadClaimables = useCallback(async () => {
+    if (!address) return;
+    const next: Record<number, string> = {};
+    for (const i of issuances) {
+      try {
+        const res = await fetch(`${API}/v1/issuances/${i.id}/claimable/${address}`);
+        if (res.ok) {
+          const d = await res.json();
+          next[i.id] = d.claimable_usdt;
+        }
+      } catch {
+        // ignore per-issuance failures
+      }
+    }
+    setClaimables(next);
+  }, [address, issuances]);
+
+  useEffect(() => {
+    loadClaimables();
+  }, [loadClaimables]);
+
+  const launchIssuance = useCallback(async () => {
+    if (!fName || !fSymbol || !fPrice || !fDocs) {
+      setError("All fields are required. The AI gate reviews your documentation.");
+      return;
+    }
+    setLaunching(true);
+    setError("");
+    setNotice("");
+    setLaunchResult(null);
+    try {
+      const probe = await fetch(`${API}/v1/issuances`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: fName,
+          symbol: fSymbol,
+          pricePerTokenUsdt: parseFloat(fPrice),
+          docsText: fDocs,
+          docsUri: fDocsUri,
+        }),
+      });
+      if (probe.status === 402) {
+        setNotice("The issuance review costs 2 USDT on BOT Chain via x402. The web checkout needs a wallet-side PAYMENT-SIGNATURE; for now use the API directly with a signed header.");
+        return;
+      }
+      const body = await probe.json();
+      setLaunchResult(body);
+      if (body?.listed) {
+        setFName(""); setFSymbol(""); setFPrice(""); setFDocs(""); setFDocsUri("");
+        loadIssuances();
+      }
+    } catch (e: any) {
+      setError(e?.message || "Launch failed");
+    } finally {
+      setLaunching(false);
+    }
+  }, [fName, fSymbol, fPrice, fDocs, fDocsUri, loadIssuances]);
+
+  const buyUnits = useCallback(
+    async (iss: Issuance, usdtAmount: string) => {
+      const eth = getEth();
+      if (!eth || !address) {
+        setError("Connect wallet first");
+        return;
+      }
+      setBusy(true);
+      setError("");
+      setNotice("");
+      try {
+        const provider = new BrowserProvider(eth);
+        const signer = await provider.getSigner();
+        const amount = parseUnits(usdtAmount, 6);
+
+        // approve USDT to the token contract
+        const usdt = new Contract(USDT, ERC20_ABI, signer);
+        const allowance = await usdt.allowance(address, iss.token);
+        if (allowance < amount) {
+          const tx = await usdt.approve(iss.token, amount);
+          await tx.wait();
+          setNotice("USDT approved. Confirm the buy transaction.");
+        }
+
+        const token = new Contract(iss.token, RWATOKEN_ABI, signer);
+        const buyTx = await token.buy(amount);
+        await buyTx.wait();
+        setNotice(`Bought ${usdtAmount} USDT of ${iss.symbol}. Units added to your wallet.`);
+        loadIssuances();
+        setTimeout(loadClaimables, 500);
+      } catch (e: any) {
+        setError(e?.reason || e?.shortMessage || e?.message || "Buy failed");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [address, loadIssuances, loadClaimables]
+  );
+
+  const claimRevenue = useCallback(
+    async (iss: Issuance) => {
+      const eth = getEth();
+      if (!eth || !address) {
+        setError("Connect wallet first");
+        return;
+      }
+      setBusy(true);
+      setError("");
+      setNotice("");
+      try {
+        const provider = new BrowserProvider(eth);
+        const signer = await provider.getSigner();
+        const distributor = new Contract(iss.distributor, DISTRIBUTOR_ABI, signer);
+        const tx = await distributor.claim();
+        await tx.wait();
+        setNotice(`Claimed revenue from ${iss.symbol}. USDT sent to your wallet.`);
+        setTimeout(loadClaimables, 500);
+      } catch (e: any) {
+        setError(e?.reason || e?.shortMessage || e?.message || "Claim failed");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [address, loadClaimables]
+  );
+
+  const balanceHint = useCallback(async (iss: Issuance): Promise<string> => {
+    const eth = getEth();
+    if (!eth || !address) return "";
+    try {
+      const provider = new BrowserProvider(eth);
+      const token = new Contract(iss.token, RWATOKEN_ABI, provider);
+      const bal = await token.balanceOf(address);
+      if (bal === 0n) return "";
+      return formatUnits(bal, 18);
+    } catch {
+      return "";
+    }
+  }, [address]);
+
   return (
-    <main style={{ maxWidth: 720, margin: "0 auto", padding: "2rem 1.25rem" }}>
-      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2.5rem" }}>
+    <main style={{ maxWidth: 860, margin: "0 auto", padding: "2rem 1.25rem" }}>
+      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
         <div>
           <h1 style={{ fontSize: "1.75rem", fontWeight: 800, letterSpacing: "-0.02em" }}>
             Veri<span style={{ color: "var(--vf-magenta)" }}>Forge</span>
           </h1>
-          <p style={{ color: "#9ca3af", fontSize: "0.875rem" }}>AI RWA verification, forged on BOT Chain</p>
+          <p style={{ color: "#9ca3af", fontSize: "0.875rem" }}>AI-gated RWA issuance and revenue distribution on BOT Chain</p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           {chainId !== null && chainId !== BOT_CHAIN_ID && (
@@ -166,106 +305,181 @@ export default function Home() {
         </div>
       </header>
 
-      <section style={{ background: "var(--vf-surface)", border: "1px solid #23233a", borderRadius: 16, padding: "1.5rem" }}>
-        <h2 style={{ fontSize: "1.1rem", fontWeight: 700, marginBottom: 4 }}>Verify an RWA project</h2>
-        <p style={{ color: "#9ca3af", fontSize: "0.85rem", marginBottom: 16 }}>
-          Paste a contract address on BOT Chain mainnet. VeriForge runs real on-chain checks, scores risk 0-100, and stores the signed verdict on-chain.
-        </p>
-        <div style={{ display: "flex", gap: 10 }}>
-          <input
-            value={target}
-            onChange={(e) => setTarget(e.target.value)}
-            placeholder="0x… contract address"
-            style={{
-              flex: 1,
-              background: "#0d0d1a",
-              border: "1px solid #2c2c47",
-              borderRadius: 10,
-              padding: "10px 14px",
-              color: "#fff",
-              fontFamily: "monospace",
-              fontSize: "0.85rem",
-            }}
-          />
-          <button onClick={runVerify} disabled={busy || !target} style={btnStyle({ disabled: busy || !target })}>
-            {busy ? "Verifying…" : "Verify (0.5 USDT)"}
-          </button>
-        </div>
-        {address && chainId === BOT_CHAIN_ID && (
-          <button onClick={() => lookup(target)} style={btnStyle({ outline: true, marginTop: 10 })}>
-            Look up existing attestation
-          </button>
-        )}
-        {error && <p style={{ color: "#fbbf24", fontSize: "0.85rem", marginTop: 12 }}>{error}</p>}
-      </section>
+      <nav style={{ display: "flex", gap: 8, marginBottom: "1.5rem" }}>
+        <button onClick={() => setTab("market")} style={tabStyle(tab === "market")}>
+          Market
+        </button>
+        <button onClick={() => setTab("launch")} style={tabStyle(tab === "launch")}>
+          Launch an asset
+        </button>
+      </nav>
 
-      {result && (
-        <section style={{ marginTop: "1.5rem", background: "var(--vf-surface)", border: "1px solid #23233a", borderRadius: 16, padding: "1.5rem" }}>
-          <VerdictCard result={result} />
+      {tab === "launch" && (
+        <section style={{ background: "var(--vf-surface)", border: "1px solid #23233a", borderRadius: 16, padding: "1.5rem" }}>
+          <h2 style={{ fontSize: "1.1rem", fontWeight: 700, marginBottom: 4 }}>Tokenize a real-world asset</h2>
+          <p style={{ color: "#9ca3af", fontSize: "0.85rem", marginBottom: 16 }}>
+            VeriForge&apos;s AI compliance officer reviews your documentation. Only issuances that pass the gate get listed on-chain — the registry refuses the rest.
+          </p>
+          <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
+            <input value={fName} onChange={(e) => setFName(e.target.value)} placeholder="Asset name (e.g. Lagos Warehouse REIT)" style={inputStyle} />
+            <input value={fSymbol} onChange={(e) => setFSymbol(e.target.value)} placeholder="SYMBOL" style={{ ...inputStyle, maxWidth: 130 }} />
+            <input value={fPrice} onChange={(e) => setFPrice(e.target.value)} placeholder="Price per unit (USDT)" type="number" step="0.01" style={{ ...inputStyle, maxWidth: 170 }} />
+          </div>
+          <input value={fDocsUri} onChange={(e) => setFDocsUri(e.target.value)} placeholder="Docs URI (optional, e.g. ipfs://…)" style={{ ...inputStyle, marginBottom: 10 }} />
+          <textarea
+            value={fDocs}
+            onChange={(e) => setFDocs(e.target.value)}
+            placeholder={"Issuer documentation — the AI gate reads this. Include: asset backing, value and audit, revenue model, legal entity and jurisdiction, token terms, custody."}
+            rows={7}
+            style={{ ...inputStyle, width: "100%", resize: "vertical", fontFamily: "inherit", marginBottom: 14 }}
+          />
+          <button onClick={launchIssuance} disabled={launching} style={btnStyle({ disabled: launching })}>
+            {launching ? "Running AI compliance gate…" : "Launch issuance (2 USDT via x402)"}
+          </button>
+          {notice && <p style={{ color: "#fbbf24", fontSize: "0.85rem", marginTop: 12 }}>{notice}</p>}
+          {error && <p style={{ color: "#f43f5e", fontSize: "0.85rem", marginTop: 12 }}>{error}</p>}
+          {launchResult && <DossierCard result={launchResult} />}
         </section>
       )}
 
-      {checked && !result && (
-        <section style={{ marginTop: "1.5rem", background: "var(--vf-surface)", border: "1px solid #23233a", borderRadius: 16, padding: "1.5rem" }}>
-          <VerdictCard result={checked.result} />
+      {tab === "market" && (
+        <section>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <h2 style={{ fontSize: "1.1rem", fontWeight: 700 }}>Live issuances ({issuances.length})</h2>
+            <button onClick={loadIssuances} style={btnStyle({ outline: true })}>
+              Refresh
+            </button>
+          </div>
+          {busy && !issuances.length && <p style={{ color: "#9ca3af" }}>Loading…</p>}
+          {error && <p style={{ color: "#f43f5e", fontSize: "0.85rem", marginBottom: 12 }}>{error}</p>}
+          {notice && <p style={{ color: "#10b981", fontSize: "0.85rem", marginBottom: 12 }}>{notice}</p>}
+          {issuances.length === 0 && !busy && (
+            <p style={{ color: "#9ca3af", background: "var(--vf-surface)", border: "1px dashed #2c2c47", borderRadius: 12, padding: "2rem", textAlign: "center" }}>
+              No issuances yet. The AI gate has to approve one before it can appear here.
+            </p>
+          )}
+          <div style={{ display: "grid", gap: 12 }}>
+            {issuances.map((iss) => (
+              <IssuanceCard
+                key={iss.id}
+                iss={iss}
+                claimable={claimables[iss.id]}
+                onBuy={(amt) => buyUnits(iss, amt)}
+                onClaim={() => claimRevenue(iss)}
+                balanceHint={balanceHint}
+              />
+            ))}
+          </div>
         </section>
       )}
 
       <footer style={{ marginTop: "3rem", color: "#6b7280", fontSize: "0.75rem", textAlign: "center" }}>
-        BOT Chain mainnet · chain 677 · x402 payments in USDT · verdicts stored on-chain
+        BOT Chain mainnet · chain 677 · AI-gated issuance · revenue claims in USDT · platform holds no funds
       </footer>
     </main>
   );
 }
 
-function VerdictCard({ result }: { result: AuditResult }) {
-  const color = VERDICT_COLOR[result.verdict] || "#9ca3af";
+function IssuanceCard({
+  iss,
+  claimable,
+  onBuy,
+  onClaim,
+  balanceHint,
+}: {
+  iss: Issuance;
+  claimable?: string;
+  onBuy: (amt: string) => void;
+  onClaim: () => void;
+  balanceHint: (iss: Issuance) => Promise<string>;
+}) {
+  const [amount, setAmount] = useState("10");
+  const [units, setUnits] = useState("");
+
+  useEffect(() => {
+    let live = true;
+    balanceHint(iss).then((u) => live && setUnits(u));
+    return () => {
+      live = false;
+    };
+  }, [iss, balanceHint]);
+
+  const price = parseFloat(iss.pricePerTokenUsdt);
+
   return (
-    <div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+    <div style={{ background: "var(--vf-surface)", border: "1px solid #23233a", borderRadius: 16, padding: "1.25rem 1.5rem" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
         <div>
-          <span style={{ fontSize: "0.75rem", color: "#9ca3af", fontFamily: "monospace" }}>{result.target}</span>
-          <h3 style={{ fontSize: "1.25rem", fontWeight: 800, color }}>
-            {VERDICT_LABEL[result.verdict] || result.verdict}
-          </h3>
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <h3 style={{ fontSize: "1.1rem", fontWeight: 800 }}>{iss.name || "—"}</h3>
+            <span style={{ fontSize: "0.7rem", color: "var(--vf-magenta)", background: "rgba(217,70,239,0.12)", padding: "2px 8px", borderRadius: 999 }}>
+              {iss.symbol}
+            </span>
+          </div>
+          <p style={{ color: "#9ca3af", fontSize: "0.8rem", fontFamily: "monospace", marginTop: 4 }}>
+            #{iss.id} · token {iss.token.slice(0, 8)}…{iss.token.slice(-4)}
+          </p>
         </div>
         <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: "2rem", fontWeight: 800, color }}>{result.score}</div>
-          <div style={{ fontSize: "0.7rem", color: "#9ca3af" }}>/ 100</div>
+          <div style={{ fontSize: "1.25rem", fontWeight: 800 }}>${price}</div>
+          <div style={{ fontSize: "0.7rem", color: "#9ca3af" }}>per unit</div>
         </div>
       </div>
-      <p style={{ color: "#d1d5db", fontSize: "0.9rem", marginBottom: 12 }}>{result.summary}</p>
-      {result.onChain?.stored && (
-        <p style={{ fontSize: "0.8rem", color: "#10b981" }}>
-          Stored on-chain ·{" "}
+      <div style={{ display: "flex", gap: 16, fontSize: "0.8rem", color: "#9ca3af", marginBottom: 12 }}>
+        <span>Supply: {parseFloat(iss.totalSupply).toLocaleString()} units</span>
+        <a href={iss.explorer} target="_blank" rel="noopener noreferrer" style={{ color: "var(--vf-magenta)" }}>
+          view on BOTScan ↗
+        </a>
+      </div>
+      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        <input value={amount} onChange={(e) => setAmount(e.target.value)} type="number" step="0.01" min="0" style={{ ...inputStyle, maxWidth: 130 }} />
+        <span style={{ fontSize: "0.8rem", color: "#9ca3af" }}>USDT</span>
+        <button onClick={() => onBuy(amount)} style={btnStyle({})}>
+          Buy
+        </button>
+        {units && <span style={{ fontSize: "0.8rem", color: "#10b981" }}>{parseFloat(units).toFixed(2)} units held</span>}
+        {claimable !== undefined && parseFloat(claimable || "0") > 0 && (
+          <button onClick={onClaim} style={btnStyle({ outline: true })}>
+            Claim {claimable} USDT
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DossierCard({ result }: { result: any }) {
+  const d: Dossier | undefined = result?.dossier || result;
+  if (!d) return null;
+  const color = VERDICT_COLOR[d.verdict] || "#9ca3af";
+  return (
+    <div style={{ marginTop: 16, border: "1px solid #2c2c47", borderRadius: 12, padding: "1rem 1.25rem" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+        <span style={{ fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.08em", color }}>
+          AI compliance gate
+        </span>
+        <span style={{ fontSize: "1.4rem", fontWeight: 800, color }}>
+          {d.score}/100 · {VERDICT_LABEL[d.verdict] || d.verdict}
+        </span>
+      </div>
+      <p style={{ color: "#d1d5db", fontSize: "0.9rem", marginBottom: 10 }}>{d.summary}</p>
+      {result?.ok && result?.onChain && (
+        <p style={{ fontSize: "0.8rem", color: "#10b981", marginBottom: 8 }}>
+          Listed on-chain ·{" "}
           <a href={result.onChain.explorer} target="_blank" rel="noopener noreferrer" style={{ color: "#10b981", textDecoration: "underline" }}>
             view tx
           </a>
         </p>
       )}
-      {result.onChain && !result.onChain.stored && (
-        <p style={{ fontSize: "0.8rem", color: "#9ca3af" }}>On-chain store: {result.onChain.reason}</p>
-      )}
-      {result.checks && result.checks.length > 0 && (
-        <div style={{ marginTop: 12 }}>
-          {result.checks.map((c) => (
-            <div key={c.name} style={{ display: "flex", gap: 8, fontSize: "0.8rem", padding: "4px 0", color: c.ok ? "#10b981" : "#f43f5e" }}>
-              <span>{c.ok ? "✓" : "✗"}</span>
-              <span style={{ minWidth: 150, color: "#e5e7eb" }}>{c.name}</span>
-              <span style={{ color: "#9ca3af" }}>{c.detail}</span>
-            </div>
-          ))}
-        </div>
-      )}
-      {result.findings && result.findings.length > 0 && (
-        <div style={{ marginTop: 12 }}>
-          {result.findings.map((f) => (
-            <div key={f.id} style={{ border: "1px solid #2c2c47", borderRadius: 8, padding: "8px 12px", marginBottom: 6 }}>
-              <span style={{ fontSize: "0.7rem", textTransform: "uppercase", color: f.severity === "critical" || f.severity === "high" ? "#f43f5e" : "#f59e0b" }}>
+      {d.findings?.length > 0 && (
+        <div>
+          {d.findings.map((f) => (
+            <div key={f.id} style={{ border: "1px solid #2c2c47", borderRadius: 8, padding: "6px 10px", marginBottom: 6, fontSize: "0.8rem" }}>
+              <span style={{ textTransform: "uppercase", color: f.severity === "critical" || f.severity === "high" ? "#f43f5e" : "#f59e0b" }}>
                 {f.severity}
-              </span>
-              <div style={{ fontSize: "0.85rem" }}>{f.title}</div>
-              <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>{f.detail}</div>
+              </span>{" "}
+              <span style={{ color: "#e5e7eb" }}>{f.title}</span>
+              <div style={{ color: "#9ca3af" }}>{f.detail}</div>
             </div>
           ))}
         </div>
@@ -274,7 +488,17 @@ function VerdictCard({ result }: { result: AuditResult }) {
   );
 }
 
-function btnStyle({ outline, disabled, marginTop }: { outline?: boolean; disabled?: boolean; marginTop?: number }) {
+const inputStyle: React.CSSProperties = {
+  background: "#0d0d1a",
+  border: "1px solid #2c2c47",
+  borderRadius: 10,
+  padding: "10px 14px",
+  color: "#fff",
+  fontSize: "0.85rem",
+  flex: 1,
+};
+
+function btnStyle({ outline, disabled }: { outline?: boolean; disabled?: boolean }) {
   return {
     background: outline ? "transparent" : "var(--vf-magenta)",
     color: outline ? "var(--vf-magenta)" : "#fff",
@@ -285,7 +509,19 @@ function btnStyle({ outline, disabled, marginTop }: { outline?: boolean; disable
     fontSize: "0.85rem",
     cursor: disabled ? "not-allowed" : "pointer",
     opacity: disabled ? 0.5 : 1,
-    marginTop,
     whiteSpace: "nowrap" as const,
+  };
+}
+
+function tabStyle(active: boolean) {
+  return {
+    background: active ? "var(--vf-magenta)" : "transparent",
+    color: active ? "#fff" : "#9ca3af",
+    border: active ? "none" : "1px solid #2c2c47",
+    borderRadius: 10,
+    padding: "8px 16px",
+    fontWeight: 600,
+    fontSize: "0.85rem",
+    cursor: "pointer",
   };
 }

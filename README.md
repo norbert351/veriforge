@@ -1,74 +1,86 @@
 # VeriForge 🔱
 
-**AI RWA verification, forged on BOT Chain.**
+**AI-gated RWA issuance on BOT Chain.**
 
-VeriForge is an AI verification layer for Real World Asset projects on BOT Chain mainnet (chain 677). Paste a contract address, the agent runs real on-chain checks (code presence, ownership, pause, supply, mint authority, source verification via BOTScan), scores risk 0-100, and stores a signed verdict in an on-chain attestation registry. Paid via x402 in USDT on BOT Chain.
+VeriForge is the issuance and revenue layer for tokenized real-world assets on BOT Chain mainnet (chain 677). An issuer documents a real asset, the VeriForge AI compliance officer reviews it and produces a dossier with a 0-100 score, and only APPROVED issuances get listed on-chain. Investors buy units with USDT, revenue is deposited into a distributor, and holders claim their pro-rata share. The platform holds no funds.
 
-Built for the **BOT Chain Builder Challenge #2 (AI × RWA)**, deadline Aug 20 2026. Reuses the x402 + signed-verdict pattern from the Foundry ASP project (X Layer), which stays untouched.
+Built for the **BOT Chain Builder Challenge #2 (AI × RWA)**, deadline Aug 20 2026.
 
-## Why it solves a real problem
+## Why this problem
 
-RWA tokenization on a fresh chain has zero trust infrastructure. When a project tokenizes real assets, who verifies the asset is real, the contract is clean, ownership is provable, and the source is public? LPs, exchanges, and buyers have no way to check. VeriForge becomes the chain's verification layer. AI is the core capability — the verdict is the product, stored on-chain.
+BOT Chain has a bridge, a DEX, a wallet, and a young ecosystem. What it lacks is the loop every RWA issuer needs: issue a token with real terms, sell it for USDT, distribute revenue pro-rata, and stay compliant. That loop is the whole business of the asset side, and it did not exist on the chain. VeriForge is that loop.
+
+AI is genuinely core, not bolted on. The compliance gate is a real LLM review of the issuer's documentation. The verdict is stored on-chain in the attestation registry, and the issuance registry refuses to list anything that is not APPROVED. No human rubber stamp, no heuristic linter, no fabricated scores.
 
 ## Architecture
 
 ```
 veriforge/
 ├── packages/
-│   ├── contracts/        # Hardhat + AttestationRegistry.sol (no funds held)
+│   ├── contracts/        # Hardhat: AttestationRegistry, IssuanceRegistry, RwaToken, RevenueDistributor
 │   └── shared/           # contract-addresses.json (deploy output)
 └── apps/
-    ├── api/              # Fastify + x402 gate + audit pipeline
-    └── web/              # Next.js, wallet connect to BOT Chain 677
+    ├── api/              # Fastify + x402 gate + AI compliance gate + issuance pipeline
+    └── web/              # Next.js: market, buy units, claim revenue, launch an asset
 ```
 
-## Safety design (mainnet-first)
+## Contract design (mainnet-safe)
 
-- AttestationRegistry holds **no funds** — no payable functions, no token transfers
-- Single verifier role, transferable only by the verifier itself
-- Audit reads are all view calls against BOT Chain RPC + BOTScan
-- x402 gate validates amount, chainId (677), and payTo before serving
-- No fabricated data: every check is backed by an RPC or explorer read
+| Contract | Role | Funds |
+|---|---|---|
+| `AttestationRegistry` | Stores AI verdicts, verifier-only writes | holds none |
+| `IssuanceRegistry` | Lists issuances, enforces the AI gate on-chain | holds none |
+| `RwaToken` | ERC-20 units, buy() pulls USDT to the issuer | holds none |
+| `RevenueDistributor` | Pull-based pro-rata claims, no admin | holds only unclaimed |
+
+The IssuanceRegistry calls the AttestationRegistry and reverts with `NotApproved` unless the token carries an APPROVED verdict. The gate is enforced in the contract, not just in the API.
+
+## The AI gate
+
+`apps/api/src/compliance.ts` sends the issuer's documentation to a real LLM (gpt-5.6-terra via the local freemodel proxy) and parses a structured dossier. Score >= 70 is APPROVED, 40-69 CAUTION, < 40 BLOCKED. If the LLM is unreachable the request fails loudly. No documentation at all scores 0 automatically.
+
+## API
+
+| Route | Fee | Purpose |
+|---|---|---|
+| `GET /health` | free | liveness + registry addresses |
+| `GET /v1/fees` | free | fee schedule |
+| `GET /v1/issuances` | free | list from on-chain registry |
+| `GET /v1/issuances/:id` | free | single issuance |
+| `GET /v1/issuances/:id/claimable/:holder` | free | USDT claimable by a holder |
+| `GET /v1/attestations/:target` | free | AI verdict for a contract |
+| `POST /v1/issuances` | 2 USDT (x402) | AI gate + deploy + attest + list |
 
 ## Quick start
 
 ```bash
-npm install -w packages/contracts
-npm run test:contracts        # 9 tests, all pass
+# contracts
+cd packages/contracts
+npm install
+npx hardhat test          # 23 tests
+
+# local node + deploy (chain 677)
+npx hardhat node
+npx hardhat run scripts/deploy-local.ts --network localhost
+
+# api
+cd ../../apps/api
+cp .env.example .env      # set VERIFIER_PRIVATE_KEY, X402_PAY_TO, FREEMODEL_API_KEY
+npm run dev               # :4000
+
+# web
+cd ../web
+cp .env.local.example .env.local
+npm run dev               # :3000
 ```
 
 Deploy to BOT Chain mainnet:
 
 ```bash
 cd packages/contracts
-cp .env.example .env          # set DEPLOYER_PRIVATE_KEY, VERIFIER_ADDRESS, BOTSCAN_API_KEY
+cp .env.example .env      # set DEPLOYER_PRIVATE_KEY, VERIFIER_ADDRESS, BOTSCAN_API_KEY
 npx hardhat run scripts/deploy.ts --network botchain
 ```
-
-Run API:
-
-```bash
-cd apps/api
-cp .env.example .env          # set X402_PAY_TO, VERIFIER_PRIVATE_KEY
-npm run dev
-```
-
-Run web:
-
-```bash
-cd apps/web
-cp .env.local.example .env.local
-npm run dev
-```
-
-## Endpoints
-
-| Route | Fee | Purpose |
-|---|---|---|
-| `GET /health` | free | liveness |
-| `GET /v1/fees` | free | fee schedule |
-| `GET /v1/attestations/:target` | free | public on-chain verdict read |
-| `POST /v1/verify-rwa` | 0.5 USDT | audit + sign + store verdict |
 
 ## BOT Chain facts
 
@@ -78,5 +90,6 @@ npm run dev
 
 ## Track fit
 
-- **RWA Applications** (highest priority): compliance tools, data services, infrastructure — named directions
-- **AI Native**: AI is the on-chain decision entity, verdicts written on-chain, not a chat wrapper
+- **RWA Applications** (highest priority): asset distribution and asset management are named directions
+- **AI Native**: the AI compliance gate is the on-chain decision entity, verdicts written on-chain, not a chat wrapper
+- **Deep mainnet integration**: the registry pair is a real deployment, not a demo

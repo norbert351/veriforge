@@ -12,7 +12,7 @@ const USDT = process.env.BOT_USDT || "0xaBabc7Ddc03e501d190C676BF3d92ef0e6e87a3C
 
 // Fee per route prefix, in USDT
 const ROUTE_FEES: Record<string, number> = {
-  "/v1/verify-rwa": 0.5,
+  "/v1/issuances": 2.0,
 };
 
 function getFee(path: string): number {
