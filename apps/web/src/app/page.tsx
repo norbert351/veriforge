@@ -50,7 +50,76 @@ const RWATOKEN_ABI = [
   "function pricePerToken() view returns (uint256)",
 ];
 const DISTRIBUTOR_ABI = ["function claim() returns (uint256)", "function claimable(address) view returns (uint256)"];
-const ERC20_ABI = ["function approve(address,uint256)", "function allowance(address,address) view returns (uint256)"];
+const ERC20_ABI = ["function approve(address,uint256)", "function allowance(address,address) view returns (uint256)", "function transfer(address,uint256)"];
+
+// EIP-712 domain/types for x402 exact-scheme signing (mirrors the API gate).
+const EIP712_TYPES = {
+  Payment: [
+    { name: "scheme", type: "string" },
+    { name: "network", type: "string" },
+    { name: "chainId", type: "uint256" },
+    { name: "asset", type: "address" },
+    { name: "amount", type: "string" },
+    { name: "payTo", type: "address" },
+    { name: "maxTimeoutSeconds", type: "uint256" },
+    { name: "description", type: "string" },
+    { name: "extra", type: "string" },
+  ],
+};
+
+function paymentMessage(accepted: any) {
+  return {
+    scheme: String(accepted.scheme || "exact"),
+    network: String(accepted.network || ""),
+    chainId: BigInt(accepted.chainId || BOT_CHAIN_ID),
+    asset: String(accepted.asset || USDT),
+    amount: String(accepted.amount || ""),
+    payTo: String(accepted.payTo || ""),
+    maxTimeoutSeconds: BigInt(accepted.maxTimeoutSeconds || 300),
+    description: String(accepted.description || ""),
+    extra: typeof accepted.extra === "string" ? accepted.extra : JSON.stringify(accepted.extra || {}),
+  };
+}
+
+// Full x402 checkout: probe → 402 challenge → wallet signs + pays → replay.
+async function paidPost(path: string, body: unknown): Promise<Response> {
+  const probe = await fetch(`${API}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (probe.status !== 402) return probe;
+
+  const challengeB64 = probe.headers.get("payment-required");
+  if (!challengeB64) return probe;
+  const challenge = JSON.parse(atob(challengeB64));
+  const accepted = challenge.accepts?.[0];
+  if (!accepted) return probe;
+
+  const eth = getEth();
+  if (!eth) throw new Error("No wallet detected. Connect your wallet to pay via x402.");
+  const provider = new BrowserProvider(eth);
+  const signer = await provider.getSigner();
+  const payer = (await signer.getAddress()).toLowerCase();
+
+  // 1. Send the exact USDT amount to payTo (the on-chain settlement).
+  const usdt = new Contract(accepted.asset, ERC20_ABI, signer);
+  const amount = BigInt(accepted.amount);
+  const tx = await usdt.transfer(accepted.payTo, amount);
+  await tx.wait();
+
+  // 2. Sign the accepted entry (EIP-712), bound to amount/payTo/chainId/asset.
+  const domain = { name: "x402", version: "2", chainId: BOT_CHAIN_ID };
+  const signature = await signer.signTypedData(domain, EIP712_TYPES, paymentMessage(accepted));
+
+  // 3. Replay with the payment proof.
+  const header = btoa(JSON.stringify({ accepted, signature, payer }));
+  return fetch(`${API}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "PAYMENT-SIGNATURE": header },
+    body: JSON.stringify(body),
+  });
+}
 
 function getEth() {
   if (typeof window === "undefined") return null;
@@ -169,22 +238,20 @@ export default function Home() {
     setNotice("");
     setLaunchResult(null);
     try {
-      const probe = await fetch(`${API}/v1/issuances`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: fName,
-          symbol: fSymbol,
-          pricePerTokenUsdt: parseFloat(fPrice),
-          docsText: fDocs,
-          docsUri: fDocsUri,
-        }),
+      // x402 checkout: probe → 402 → wallet signs + transfers USDT → replay.
+      const res = await paidPost("/v1/issuances", {
+        name: fName,
+        symbol: fSymbol,
+        pricePerTokenUsdt: parseFloat(fPrice),
+        docsText: fDocs,
+        docsUri: fDocsUri,
       });
-      if (probe.status === 402) {
-        setNotice("The issuance review costs 2 USDT on BOT Chain via x402. The web checkout needs a wallet-side PAYMENT-SIGNATURE; for now use the API directly with a signed header.");
+      if (res.status === 402) {
+        const body = await res.json();
+        setNotice(`Payment required: ${body.message || "2 USDT on BOT Chain"}. Confirm the transfer and signature in your wallet.`);
         return;
       }
-      const body = await probe.json();
+      const body = await res.json();
       setLaunchResult(body);
       if (body?.listed) {
         setFName(""); setFSymbol(""); setFPrice(""); setFDocs(""); setFDocsUri("");
