@@ -100,7 +100,9 @@ async function paymentSettled(from: string, to: string, value: bigint, maxBlocks
     // the indexed pair, then confirm the exact amount in the decoded args.
     const filter = usdt.filters.Transfer(from, to);
     const events = await usdt.queryFilter(filter, Math.max(0, latest - maxBlocks), latest);
-    const match = events.find((e: any) => e.args && BigInt(e.args.value) === value);
+    // Newest-first: a fresh payment must win over an older identical one from
+    // the same payer (the older is likely already consumed).
+    const match = [...events].reverse().find((e: any) => e.args && BigInt(e.args.value) === value);
     return match ? match.transactionHash : null;
   } catch {
     return null;

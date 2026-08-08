@@ -7,6 +7,7 @@
 //   GET  /v1/attestations/:target      — free, attestation read
 //   POST /v1/issuances                 — 2 USDT (x402): AI gate + deploy + list
 
+import "dotenv/config";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { ethers } from "ethers";
@@ -20,6 +21,18 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = Fastify({ logger: true });
+
+// Error carrying an HTTP status + body, thrown inside the serialized pipeline
+// and turned into a single reply by the route handler (no Fastify double-send).
+class HttpError extends Error {
+  status: number;
+  body: any;
+  constructor(status: number, body: any) {
+    super(typeof body?.message === "string" ? body.message : String(status));
+    this.status = status;
+    this.body = body;
+  }
+}
 
 await app.register(cors, { origin: true });
 
@@ -194,126 +207,137 @@ app.get("/v1/attestations/:target", async (req, reply) => {
 
 app.post("/v1/issuances", { preHandler: x402Gate }, async (req, reply) => {
   // One issuance pipeline at a time — the verifier wallet signs sequential txs.
-  return serializePipeline(async () => {
-  const body = (req.body || {}) as {
-    name?: string;
-    symbol?: string;
-    pricePerTokenUsdt?: number | string;
-    docsText?: string;
-    docsUri?: string;
-  };
-
-  const name = (body.name || "").trim();
-  const symbol = (body.symbol || "").trim().toUpperCase();
-  const docsText = (body.docsText || "").trim();
-  const docsUri = (body.docsUri || "").trim();
-  const priceUsdt = Number(body.pricePerTokenUsdt);
-
-  if (!name || !symbol || !docsText) {
-    return reply.status(400).send({ error: "missing_fields", message: "name, symbol and docsText are required" });
-  }
-  if (!Number.isFinite(priceUsdt) || priceUsdt <= 0) {
-    return reply.status(400).send({ error: "invalid_price", message: "pricePerTokenUsdt must be > 0" });
-  }
-
-  // 1. AI compliance gate — reviews the issuer documentation
-  let dossier: ComplianceDossier;
+  // The pipeline returns plain data or throws HttpError; the handler replies
+  // exactly once. Never send from inside the serialized fn (Fastify double-send).
   try {
-    dossier = await runComplianceGate({ name, symbol, docsText, docsUri });
-  } catch (e: any) {
-    app.log.error({ err: e }, "compliance gate failed");
-    return reply.status(503).send({ error: "gate_unavailable", message: `AI gate failed: ${e?.message || e}` });
-  }
+    const result = await serializePipeline(async () => {
+      const body = (req.body || {}) as {
+        name?: string;
+        symbol?: string;
+        pricePerTokenUsdt?: number | string;
+        docsText?: string;
+        docsUri?: string;
+      };
 
-  // 2. Gate rejects — no deployment, no listing. The fee covers the review.
-  if (dossier.verdict !== 2) {
-    return reply.status(422).send({
-      ok: false,
-      listed: false,
-      reason: "issuance_rejected_by_gate",
-      dossier,
+      const name = (body.name || "").trim();
+      const symbol = (body.symbol || "").trim().toUpperCase();
+      const docsText = (body.docsText || "").trim();
+      const docsUri = (body.docsUri || "").trim();
+      const priceUsdt = Number(body.pricePerTokenUsdt);
+
+      if (!name || !symbol || !docsText) {
+        throw new HttpError(400, { error: "missing_fields", message: "name, symbol and docsText are required" });
+      }
+      if (!Number.isFinite(priceUsdt) || priceUsdt <= 0) {
+        throw new HttpError(400, { error: "invalid_price", message: "pricePerTokenUsdt must be > 0" });
+      }
+
+      // 1. AI compliance gate — reviews the issuer documentation
+      let dossier: ComplianceDossier;
+      try {
+        dossier = await runComplianceGate({ name, symbol, docsText, docsUri });
+      } catch (e: any) {
+        app.log.error({ err: e }, "compliance gate failed");
+        throw new HttpError(503, { error: "gate_unavailable", message: `AI gate failed: ${e?.message || e}` });
+      }
+
+      // 2. Gate rejects — no deployment, no listing. The fee covers the review.
+      if (dossier.verdict !== 2) {
+        throw new HttpError(422, {
+          ok: false,
+          listed: false,
+          reason: "issuance_rejected_by_gate",
+          dossier,
+        });
+      }
+
+      // 3. Gate approves — deploy RwaToken + RevenueDistributor, attest, list.
+      const wallet = getVerifierWallet();
+      if (!wallet) {
+        throw new HttpError(503, { error: "not_configured", message: "VERIFIER_PRIVATE_KEY not set" });
+      }
+      const cfg = loadContractAddresses();
+      if (!cfg) {
+        throw new HttpError(503, { error: "not_deployed", message: "Registry not deployed yet" });
+      }
+
+      const usdt = process.env.BOT_USDT || "0xaBabc7Ddc03e501d190C676BF3d92ef0e6e87a3C";
+      const priceRaw = ethers.parseUnits(String(priceUsdt.toFixed(6)), 6);
+
+      // Deterministic nonce sequencing: fetch once, increment per tx. Avoids the
+      // ethers v6 parallel-nonce race on fast chains (and local automining nodes).
+      let nonce = await wallet.getNonce("pending");
+
+      async function nextNonce(): Promise<number> {
+        return nonce++;
+      }
+
+      try {
+        // 3a. Deploy RwaToken (units)
+        const tokenFactory = new ethers.ContractFactory(RWATOKEN_ARTIFACT.abi, RWATOKEN_ARTIFACT.bytecode, wallet);
+        const token = await tokenFactory.deploy(name, symbol, wallet.address, usdt, priceRaw, { nonce: await nextNonce() });
+        await token.waitForDeployment();
+        const tokenAddr = await token.getAddress();
+        app.log.info(`RwaToken deployed: ${tokenAddr}`);
+
+        // 3b. Deploy RevenueDistributor
+        const distFactory = new ethers.ContractFactory(DISTRIBUTOR_ARTIFACT.abi, DISTRIBUTOR_ARTIFACT.bytecode, wallet);
+        const distributor = await distFactory.deploy(tokenAddr, usdt, { nonce: await nextNonce() });
+        await distributor.waitForDeployment();
+        const distributorAddr = await distributor.getAddress();
+        app.log.info(`RevenueDistributor deployed: ${distributorAddr}`);
+
+        // 3c. Attest APPROVED on-chain (the gate verdict, verifier-signed)
+        const attestations = new ethers.Contract(cfg.attestationRegistry, ATTESTATION_ABI, wallet);
+        const findingsJson = JSON.stringify({ findings: dossier.findings, summary: dossier.summary });
+        const findingsHash = ethers.getBytes(ethers.keccak256(ethers.toUtf8Bytes(findingsJson)))[0];
+        const reportUri = `veriforge://dossier/${tokenAddr.toLowerCase()}/${dossier.checkedAt}`;
+        const attestTx = await attestations.attest(tokenAddr, dossier.score, 2, findingsHash, reportUri, { gasLimit: 600_000, nonce: await nextNonce() });
+        const attestReceipt = await attestTx.wait();
+        app.log.info(`Attestation stored: ${attestReceipt!.hash}`);
+
+        // 3d. List in IssuanceRegistry — reverts on-chain if not APPROVED
+        const registry = new ethers.Contract(cfg.issuanceRegistry, ISSUANCE_ABI, wallet);
+        const issueTx = await registry.issue(wallet.address, tokenAddr, distributorAddr, priceRaw, docsUri, { gasLimit: 600_000, nonce: await nextNonce() });
+        const issueReceipt = await issueTx.wait();
+        const id = Number(await registry.count());
+        app.log.info(`Issuance #${id} listed: ${issueReceipt!.hash}`);
+
+        const hydrated = await hydrateIssuance(new ethers.Contract(cfg.issuanceRegistry, ISSUANCE_ABI, getProvider()), getProvider(), id);
+
+        return {
+          ok: true,
+          listed: true,
+          issuance_id: id,
+          dossier,
+          onChain: {
+            token: tokenAddr,
+            distributor: distributorAddr,
+            attestationTx: attestReceipt!.hash,
+            listingTx: issueReceipt!.hash,
+            explorer: `https://scan.botchain.ai/tx/${issueReceipt!.hash}`,
+          },
+          issuance: hydrated,
+        };
+      } catch (e: any) {
+        app.log.error({ err: e }, "issuance pipeline failed");
+        throw new HttpError(502, {
+          ok: false,
+          listed: false,
+          reason: "deployment_failed",
+          detail: e?.reason || e?.message || String(e),
+          dossier,
+        });
+      }
     });
-  }
-
-  // 3. Gate approves — deploy RwaToken + RevenueDistributor, attest, list.
-  const wallet = getVerifierWallet();
-  if (!wallet) {
-    return reply.status(503).send({ error: "not_configured", message: "VERIFIER_PRIVATE_KEY not set" });
-  }
-  const cfg = loadContractAddresses();
-  if (!cfg) {
-    return reply.status(503).send({ error: "not_deployed", message: "Registry not deployed yet" });
-  }
-
-  const usdt = process.env.BOT_USDT || "0xaBabc7Ddc03e501d190C676BF3d92ef0e6e87a3C";
-  const priceRaw = ethers.parseUnits(String(priceUsdt.toFixed(6)), 6);
-
-  // Deterministic nonce sequencing: fetch once, increment per tx. Avoids the
-  // ethers v6 parallel-nonce race on fast chains (and local automining nodes).
-  let nonce = await wallet.getNonce("pending");
-
-  async function nextNonce(): Promise<number> {
-    return nonce++;
-  }
-
-  try {
-    // 3a. Deploy RwaToken (units)
-    const tokenFactory = new ethers.ContractFactory(RWATOKEN_ARTIFACT.abi, RWATOKEN_ARTIFACT.bytecode, wallet);
-    const token = await tokenFactory.deploy(name, symbol, wallet.address, usdt, priceRaw, { nonce: await nextNonce() });
-    await token.waitForDeployment();
-    const tokenAddr = await token.getAddress();
-    app.log.info(`RwaToken deployed: ${tokenAddr}`);
-
-    // 3b. Deploy RevenueDistributor
-    const distFactory = new ethers.ContractFactory(DISTRIBUTOR_ARTIFACT.abi, DISTRIBUTOR_ARTIFACT.bytecode, wallet);
-    const distributor = await distFactory.deploy(tokenAddr, usdt, { nonce: await nextNonce() });
-    await distributor.waitForDeployment();
-    const distributorAddr = await distributor.getAddress();
-    app.log.info(`RevenueDistributor deployed: ${distributorAddr}`);
-
-    // 3c. Attest APPROVED on-chain (the gate verdict, verifier-signed)
-    const attestations = new ethers.Contract(cfg.attestationRegistry, ATTESTATION_ABI, wallet);
-    const findingsJson = JSON.stringify({ findings: dossier.findings, summary: dossier.summary });
-    const findingsHash = ethers.getBytes(ethers.keccak256(ethers.toUtf8Bytes(findingsJson)))[0];
-    const reportUri = `veriforge://dossier/${tokenAddr.toLowerCase()}/${dossier.checkedAt}`;
-    const attestTx = await attestations.attest(tokenAddr, dossier.score, 2, findingsHash, reportUri, { gasLimit: 600_000, nonce: await nextNonce() });
-    const attestReceipt = await attestTx.wait();
-    app.log.info(`Attestation stored: ${attestReceipt!.hash}`);
-
-    // 3d. List in IssuanceRegistry — reverts on-chain if not APPROVED
-    const registry = new ethers.Contract(cfg.issuanceRegistry, ISSUANCE_ABI, wallet);
-    const issueTx = await registry.issue(wallet.address, tokenAddr, distributorAddr, priceRaw, docsUri, { gasLimit: 600_000, nonce: await nextNonce() });
-    const issueReceipt = await issueTx.wait();
-    const id = Number(await registry.count());
-    app.log.info(`Issuance #${id} listed: ${issueReceipt!.hash}`);
-
-    const hydrated = await hydrateIssuance(new ethers.Contract(cfg.issuanceRegistry, ISSUANCE_ABI, getProvider()), getProvider(), id);
-
-    return {
-      ok: true,
-      listed: true,
-      issuance_id: id,
-      dossier,
-      onChain: {
-        token: tokenAddr,
-        distributor: distributorAddr,
-        attestationTx: attestReceipt!.hash,
-        listingTx: issueReceipt!.hash,
-        explorer: `https://scan.botchain.ai/tx/${issueReceipt!.hash}`,
-      },
-      issuance: hydrated,
-    };
+    return reply.send(result);
   } catch (e: any) {
-    app.log.error({ err: e }, "issuance pipeline failed");
-    return reply.status(502).send({
-      ok: false,
-      listed: false,
-      reason: "deployment_failed",
-      detail: e?.reason || e?.message || String(e),
-      dossier,
-    });
+    if (e instanceof HttpError) {
+      return reply.status(e.status).send(e.body);
+    }
+    app.log.error({ err: e }, "unhandled issuance error");
+    return reply.status(500).send({ error: "internal", message: e?.message || String(e) });
   }
-  });
 });
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
