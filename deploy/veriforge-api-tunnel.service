@@ -1,0 +1,15 @@
+[Unit]
+Description=VeriForge API tunnel (cloudflared quick tunnel)
+After=network.target veriforge-api.service
+Requires=veriforge-api.service
+
+[Service]
+Type=simple
+User=ubuntu
+ExecStart=/usr/local/bin/cloudflared tunnel --url http://localhost:4000 --no-autoupdate
+Restart=always
+RestartSec=10
+Environment=PATH=/usr/bin:/bin:/usr/local/bin
+
+[Install]
+WantedBy=multi-user.target

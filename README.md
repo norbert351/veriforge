@@ -49,7 +49,7 @@ The IssuanceRegistry calls the AttestationRegistry and reverts with `NotApproved
 | `GET /v1/issuances/:id` | free | single issuance |
 | `GET /v1/issuances/:id/claimable/:holder` | free | USDT claimable by a holder |
 | `GET /v1/attestations/:target` | free | AI verdict for a contract |
-| `POST /v1/issuances` | 2 USDT (x402) | AI gate + deploy + attest + list |
+| `POST /v1/issuances` | 1 USDT (x402) | AI gate + deploy + attest + list |
 
 ## Quick start
 
@@ -74,6 +74,15 @@ cp .env.local.example .env.local
 npm run dev               # :3000
 ```
 
+Production-style local stack (systemd, survives reboot):
+
+```bash
+sudo cp deploy/veriforge-*.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now veriforge-node veriforge-api veriforge-web
+cd packages/contracts && npx hardhat run scripts/deploy-local.ts --network localhost
+```
+
 Deploy to BOT Chain mainnet:
 
 ```bash
@@ -81,6 +90,17 @@ cd packages/contracts
 cp .env.example .env      # set DEPLOYER_PRIVATE_KEY, VERIFIER_ADDRESS, BOTSCAN_API_KEY
 npx hardhat run scripts/deploy.ts --network botchain
 ```
+
+## Web
+
+Next.js 15 + RainbowKit (wagmi v2) wallet model. BOT Chain 677 is a first-class wagmi chain, so connect, chain switch, and account state are all provider-managed — no raw `window.ethereum` plumbing. The web server proxies `/v1/*` to the API (next.config rewrites), so the app works from a single origin with no CORS and no baked localhost base.
+
+| Flow | Path |
+|---|---|
+| Launch an asset (docs → AI gate → deploy → list) | Launch tab, 1 USDT via x402 |
+| Buy units with USDT | Market tab, wallet-signed approve + buy |
+| Deposit revenue | Market tab, issuer row |
+| Claim pro-rata share | Market tab, holder row |
 
 ## BOT Chain facts
 

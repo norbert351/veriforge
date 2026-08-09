@@ -5,7 +5,7 @@
 //   GET  /v1/issuances/:id             — free, single issuance
 //   GET  /v1/issuances/:id/claimable/:holder — free, USDT claimable
 //   GET  /v1/attestations/:target      — free, attestation read
-//   POST /v1/issuances                 — 2 USDT (x402): AI gate + deploy + list
+//   POST /v1/issuances                 — 1 USDT (x402): AI gate + deploy + list
 
 import "dotenv/config";
 import Fastify from "fastify";
@@ -125,7 +125,7 @@ app.get("/health", async () => {
 });
 
 app.get("/v1/fees", async () => ({
-  create_issuance: { amount_usdt: 2.0, asset: "USDT", network: `eip155:${BOT_CHAIN_ID}`, pay_to: process.env.X402_PAY_TO || "" },
+  create_issuance: { amount_usdt: 1.0, asset: "USDT", network: `eip155:${BOT_CHAIN_ID}`, pay_to: process.env.X402_PAY_TO || "" },
 }));
 
 app.get("/v1/issuances", async (req, reply) => {

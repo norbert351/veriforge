@@ -1,0 +1,17 @@
+[Unit]
+Description=VeriForge API (x402 gate + AI compliance + issuance pipeline)
+After=network.target veriforge-node.service
+Requires=veriforge-node.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/veriforge/apps/api
+ExecStart=/usr/bin/env PORT=4000 /home/ubuntu/veriforge/node_modules/.bin/tsx src/server.ts
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+Environment=PATH=/usr/bin:/bin:/home/ubuntu/.npm-global/bin
+
+[Install]
+WantedBy=multi-user.target

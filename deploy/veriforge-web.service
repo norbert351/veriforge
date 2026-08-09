@@ -1,0 +1,17 @@
+[Unit]
+Description=VeriForge web (Next.js standalone, same-origin API proxy)
+After=network.target veriforge-api.service
+Requires=veriforge-api.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/veriforge/apps/web/.next/standalone/apps/web
+ExecStart=/usr/bin/env PORT=3000 HOSTNAME=0.0.0.0 node server.js
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+Environment=PATH=/usr/bin:/bin:/home/ubuntu/.npm-global/bin
+
+[Install]
+WantedBy=multi-user.target

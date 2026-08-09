@@ -1,0 +1,16 @@
+[Unit]
+Description=VeriForge local hardhat node (chain 677)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/veriforge/packages/contracts
+ExecStart=/usr/bin/npx hardhat node --port 8545
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+Environment=PATH=/usr/bin:/bin:/home/ubuntu/.npm-global/bin
+
+[Install]
+WantedBy=multi-user.target

@@ -18,7 +18,7 @@ const RPC = process.env.BOT_RPC || "https://rpc.botchain.ai";
 
 // Fee per route prefix, in USDT
 const ROUTE_FEES: Record<string, number> = {
-  "/v1/issuances": 2.0,
+  "/v1/issuances": 1.0,
 };
 
 function getFee(path: string): number {

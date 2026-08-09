@@ -2,19 +2,15 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { BrowserProvider, Contract, parseUnits, formatUnits } from "ethers";
+import { useAccount, useSwitchChain } from "wagmi";
+import { ConnectButton } from "@rainbow-me/rainbowkit";
+import { botChain } from "@/lib/wagmi-config";
 
 // BOT Chain mainnet
 const BOT_CHAIN_ID = 677;
-const BOT_CHAIN_ID_HEX = "0x2a5";
-const TARGET_NET = {
-  chainId: BOT_CHAIN_ID_HEX,
-  chainName: "BOT Chain Mainnet",
-  nativeCurrency: { name: "BOT", symbol: "BOT", decimals: 18 },
-  rpcUrls: ["https://rpc.botchain.ai"],
-  blockExplorerUrls: ["https://scan.botchain.ai"],
-} as const;
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+// API is same-origin — the web server proxies /v1/* to the API (next.config rewrites).
+const API = "";
 const USDT = process.env.NEXT_PUBLIC_USDT || "0xaBabc7Ddc03e501d190C676BF3d92ef0e6e87a3C";
 
 interface Issuance {
@@ -127,8 +123,9 @@ function getEth() {
 }
 
 export default function Home() {
-  const [address, setAddress] = useState<string | null>(null);
-  const [chainId, setChainId] = useState<number | null>(null);
+  // wagmi-managed wallet state (RainbowKit ConnectButton drives connection)
+  const { address, chainId } = useAccount();
+  const { switchChainAsync } = useSwitchChain();
   const [tab, setTab] = useState<"launch" | "market">("market");
 
   // issuer form
@@ -147,46 +144,17 @@ export default function Home() {
   const [notice, setNotice] = useState("");
   const [claimables, setClaimables] = useState<Record<number, string>>({});
 
-  const connect = useCallback(async () => {
-    const eth = getEth();
-    if (!eth) {
-      setError("No wallet detected. Install a wallet and switch to BOT Chain mainnet.");
-      return;
-    }
-    try {
-      const accounts = await eth.request({ method: "eth_requestAccounts" });
-      setAddress(accounts[0]);
-      const chain = await eth.request({ method: "eth_chainId" });
-      setChainId(parseInt(chain, 16));
-    } catch (e: any) {
-      setError(e?.message || "Wallet connection failed");
-    }
-  }, []);
-
   const switchToBot = useCallback(async () => {
-    const eth = getEth();
-    if (!eth) return;
     try {
-      await eth.request({ method: "wallet_switchEthereumChain", params: [{ chainId: BOT_CHAIN_ID_HEX }] });
-      setChainId(BOT_CHAIN_ID);
+      await switchChainAsync({ chainId: BOT_CHAIN_ID });
     } catch (e: any) {
       if (e?.code === 4902) {
-        await eth.request({ method: "wallet_addEthereumChain", params: [TARGET_NET] });
-        setChainId(BOT_CHAIN_ID);
+        setError("BOT Chain not in this wallet. Add it manually: chain 677, RPC https://rpc.botchain.ai");
+      } else {
+        setError(e?.shortMessage || e?.message || "Chain switch failed");
       }
     }
-  }, []);
-
-  useEffect(() => {
-    const eth = getEth();
-    if (!eth) return;
-    eth.on?.("accountsChanged", (accs: string[]) => setAddress(accs[0] || null));
-    eth.on?.("chainChanged", (c: string) => setChainId(parseInt(c, 16)));
-    return () => {
-      eth.removeListener?.("accountsChanged", () => {});
-      eth.removeListener?.("chainChanged", () => {});
-    };
-  }, []);
+  }, [switchChainAsync]);
 
   const loadIssuances = useCallback(async () => {
     setBusy(true);
@@ -248,7 +216,7 @@ export default function Home() {
       });
       if (res.status === 402) {
         const body = await res.json();
-        setNotice(`Payment required: ${body.message || "2 USDT on BOT Chain"}. Confirm the transfer and signature in your wallet.`);
+        setNotice(`Payment required: ${body.message || "1 USDT on BOT Chain"}. Confirm the transfer and signature in your wallet.`);
         return;
       }
       const body = await res.json();
@@ -393,21 +361,16 @@ export default function Home() {
           <p style={{ color: "#9ca3af", fontSize: "0.875rem" }}>AI-gated RWA issuance and revenue distribution on BOT Chain</p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          {chainId !== null && chainId !== BOT_CHAIN_ID && (
+          {chainId !== undefined && chainId !== null && chainId !== BOT_CHAIN_ID && (
             <button onClick={switchToBot} style={btnStyle({ outline: true })}>
               Switch to BOT Chain
             </button>
           )}
-          {!address ? (
-            <button onClick={connect} style={btnStyle({})}>
-              Connect Wallet
-            </button>
-          ) : (
-            <span style={{ fontSize: "0.8rem", color: "#cbd5e1", background: "var(--vf-surface)", padding: "6px 12px", borderRadius: 999 }}>
-              {address.slice(0, 6)}…{address.slice(-4)}
-              {chainId === BOT_CHAIN_ID ? " · BOT" : " · wrong net"}
-            </span>
-          )}
+          <ConnectButton
+            chainStatus="icon"
+            showBalance={false}
+            accountStatus="address"
+          />
         </div>
       </header>
 
@@ -440,7 +403,7 @@ export default function Home() {
             style={{ ...inputStyle, width: "100%", resize: "vertical", fontFamily: "inherit", marginBottom: 14 }}
           />
           <button onClick={launchIssuance} disabled={launching} style={btnStyle({ disabled: launching })}>
-            {launching ? "Running AI compliance gate…" : "Launch issuance (2 USDT via x402)"}
+            {launching ? "Running AI compliance gate…" : "Launch issuance (1 USDT via x402)"}
           </button>
           {notice && <p style={{ color: "#fbbf24", fontSize: "0.85rem", marginTop: 12 }}>{notice}</p>}
           {error && <p style={{ color: "#f43f5e", fontSize: "0.85rem", marginTop: 12 }}>{error}</p>}
