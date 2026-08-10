@@ -26,6 +26,13 @@ export interface ComplianceDossier {
 const GATE_URL = process.env.GATE_URL || "http://localhost:8799/v1/chat/completions";
 const GATE_MODEL = process.env.GATE_MODEL || "gpt-5.6-terra";
 const GATE_KEY = process.env.FREEMODEL_API_KEY || "";
+// Fallback rail: if the primary gate upstream is down (container
+// provisioning, outage, rate limit), the gate fails over to a second
+// OpenAI-compatible endpoint so issuance can keep working. The dossier
+// records which model actually produced the verdict.
+const FALLBACK_URL = process.env.FALLBACK_GATE_URL || "";
+const FALLBACK_MODEL = process.env.FALLBACK_GATE_MODEL || "openai/gpt-4o-mini";
+const FALLBACK_KEY = process.env.FALLBACK_GATE_KEY || process.env.OPENROUTER_API_KEY || "";
 
 const APPROVE_THRESHOLD = 70;
 const CAUTION_THRESHOLD = 40;
@@ -101,30 +108,52 @@ export async function runComplianceGate(doc: {
     };
   }
 
-  const res = await fetch(GATE_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(GATE_KEY ? { Authorization: `Bearer ${GATE_KEY}` } : {}),
-    },
-    body: JSON.stringify({
-      model: GATE_MODEL,
-      messages: [{ role: "user", content: buildPrompt(doc) }],
-      max_tokens: 900,
-      temperature: 0.2,
-    }),
-    signal: AbortSignal.timeout(60000),
-  });
+  const prompt = buildPrompt(doc);
+  const payload = {
+    model: GATE_MODEL,
+    messages: [{ role: "user", content: prompt }],
+    max_tokens: 900,
+    temperature: 0.2,
+  };
 
-  if (!res.ok) {
-    throw new Error(`AI gate upstream error ${res.status}: ${await res.text().catch(() => "")}`);
+  async function callGate(url: string, model: string, key: string): Promise<ComplianceDossier> {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(key ? { Authorization: `Bearer ${key}` } : {}),
+      },
+      body: JSON.stringify({ ...payload, model }),
+      signal: AbortSignal.timeout(60000),
+    });
+
+    if (!res.ok) {
+      throw new Error(`AI gate upstream error ${res.status}: ${await res.text().catch(() => "")}`);
+    }
+
+    const json: any = await res.json();
+    const content: string = json?.choices?.[0]?.message?.content || "";
+    const dossier = parseDossier(content);
+    if (!dossier) {
+      throw new Error("AI gate returned unparseable output — refusing to fabricate a verdict.");
+    }
+    dossier.model = model;
+    return dossier;
   }
 
-  const json: any = await res.json();
-  const content: string = json?.choices?.[0]?.message?.content || "";
-  const dossier = parseDossier(content);
-  if (!dossier) {
-    throw new Error("AI gate returned unparseable output — refusing to fabricate a verdict.");
+  // Primary rail first, fallback rail second. Both fail loudly.
+  try {
+    return await callGate(GATE_URL, GATE_MODEL, GATE_KEY);
+  } catch (primaryErr) {
+    if (FALLBACK_URL) {
+      try {
+        return await callGate(FALLBACK_URL, FALLBACK_MODEL, FALLBACK_KEY);
+      } catch (fallbackErr) {
+        throw new Error(
+          `AI gate unreachable (primary: ${(primaryErr as Error).message}; fallback: ${(fallbackErr as Error).message})`
+        );
+      }
+    }
+    throw primaryErr;
   }
-  return dossier;
 }

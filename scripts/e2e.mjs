@@ -84,22 +84,43 @@ Terms: 100,000 units at 10 USDT each. Quarterly buyback option at par plus accru
   // buy units: approve + buy 50 USDT worth
   const rwaAbi = ["function buy(uint256) returns (uint256)", "function balanceOf(address) view returns (uint256)"];
   const distAbi = ["function deposit(uint256)", "function claim() returns (uint256)", "function claimable(address) view returns (uint256)"];
+  // The API pipeline consumes the ISSUER's nonces behind this script, so the
+  // issuer must read the chain. The investor is only used here, so track its
+  // nonce locally to avoid the latest-block read racing with automine.
+  let invNonce = await provider.getTransactionCount(investor.address, "latest");
   const freshNonce = async (w) => provider.getTransactionCount(w.address, "latest");
   const usdtApprove = new ethers.Contract(USDT, ["function approve(address,uint256)"], investor);
-  const appr = await usdtApprove.approve(tokenAddr, ethers.parseUnits("50", 6), { nonce: await freshNonce(investor) });
+  const appr = await usdtApprove.approve(tokenAddr, ethers.parseUnits("50", 6), { nonce: invNonce++ });
   await appr.wait();
   const token = new ethers.Contract(tokenAddr, rwaAbi, investor);
-  const buy = await token.buy(ethers.parseUnits("50", 6), { nonce: await freshNonce(investor) });
+  const buy = await token.buy(ethers.parseUnits("50", 6), { nonce: invNonce++ });
   const buyR = await buy.wait();
   const bal = await token.balanceOf(investor.address);
   console.log("6. investor bought 50 USDT worth ->", ethers.formatUnits(bal, 18), "units tx:", buyR.hash);
 
   // issuer deposits revenue 25 USDT
+  // The API pipeline uses the same issuer key (deploy/attest/list), so the
+  // issuer nonce advances between our read and our send. Retry on nonce
+  // expiry with a fresh read instead of failing the demo.
+  const sendWithRetry = async (fn) => {
+    for (let attempt = 0; attempt < 6; attempt++) {
+      try {
+        return await fn({ nonce: await freshNonce(issuer) });
+      } catch (e) {
+        if (e?.code === "NONCE_EXPIRED" || /nonce/i.test(String(e?.message || ""))) {
+          await new Promise((r) => setTimeout(r, 800));
+          continue;
+        }
+        throw e;
+      }
+    }
+    throw new Error("nonce retry exhausted");
+  };
   const usdtDep = new ethers.Contract(USDT, ["function approve(address,uint256)"], issuer);
-  const depAppr = await usdtDep.approve(distributorAddr, ethers.parseUnits("25", 6), { nonce: await freshNonce(issuer) });
+  const depAppr = await sendWithRetry((o) => usdtDep.approve(distributorAddr, ethers.parseUnits("25", 6), o));
   await depAppr.wait();
   const dist = new ethers.Contract(distributorAddr, distAbi, issuer);
-  const dep = await dist.deposit(ethers.parseUnits("25", 6), { nonce: await freshNonce(issuer) });
+  const dep = await sendWithRetry((o) => dist.deposit(ethers.parseUnits("25", 6), o));
   await dep.wait();
   console.log("7. issuer deposited 25 USDT revenue");
 
