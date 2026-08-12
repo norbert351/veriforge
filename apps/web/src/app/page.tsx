@@ -6,8 +6,9 @@ import { useAccount, useSwitchChain } from "wagmi";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { botChain } from "@/lib/wagmi-config";
 
-// BOT Chain mainnet
-const BOT_CHAIN_ID = 677;
+// BOT Chain mainnet (677) by default; Bohr testnet (968) via env at build time
+const BOT_CHAIN_ID = Number(process.env.NEXT_PUBLIC_BOT_CHAIN_ID || 677);
+const CHAIN_LABEL = process.env.NEXT_PUBLIC_BOT_CHAIN_NAME || "BOT Chain mainnet";
 
 // API is same-origin — the web server proxies /v1/* to the API (next.config rewrites).
 const API = "";
@@ -149,7 +150,7 @@ export default function Home() {
       await switchChainAsync({ chainId: BOT_CHAIN_ID });
     } catch (e: any) {
       if (e?.code === 4902) {
-        setError("BOT Chain not in this wallet. Add it manually: chain 677, RPC https://rpc.botchain.ai");
+        setError("BOT Chain not in this wallet. Add it manually: chain " + BOT_CHAIN_ID + ", RPC " + (process.env.NEXT_PUBLIC_BOT_RPC || "https://rpc.botchain.ai"));
       } else {
         setError(e?.shortMessage || e?.message || "Chain switch failed");
       }
@@ -444,7 +445,7 @@ export default function Home() {
       )}
 
       <footer style={{ marginTop: "3rem", color: "#6b7280", fontSize: "0.75rem", textAlign: "center" }}>
-        BOT Chain mainnet · chain 677 · AI-gated issuance · revenue claims in USDT · platform holds no funds
+        {CHAIN_LABEL} · chain {BOT_CHAIN_ID} · AI-gated issuance · revenue claims in USDT · platform holds no funds
       </footer>
     </main>
   );
