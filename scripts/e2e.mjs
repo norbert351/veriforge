@@ -3,12 +3,14 @@ import { ethers } from "ethers";
 
 const RPC = process.env.BOT_RPC || "http://127.0.0.1:8545";
 const API = process.env.VERIFORGE_API_URL || "http://localhost:4000";
-const USDT = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
-const PAY_TO = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
-const ISSUER_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"; // acct0
-const INVESTOR_KEY = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"; // acct1
+const CHAIN_ID = Number(process.env.BOT_CHAIN_ID || 677);
+const USDT = process.env.BOT_USDT || "0x5FbDB2315678afecb367f032d93F642f64180aa3";
+const PAY_TO = process.env.X402_PAY_TO || "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+const ISSUER_KEY = process.env.VERIFIER_PRIVATE_KEY || "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"; // acct0
+const INVESTOR_KEY = process.env.E2E_INVESTOR_KEY || "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"; // acct1
+const PUBLIC_CHAIN = CHAIN_ID !== 677 || RPC.includes("bohr") || RPC.includes("botchain.ai");
 
-const provider = new ethers.JsonRpcProvider(RPC, 677, { staticNetwork: true });
+const provider = new ethers.JsonRpcProvider(RPC, CHAIN_ID, { staticNetwork: true });
 const issuer = new ethers.Wallet(ISSUER_KEY, provider);
 const investor = new ethers.Wallet(INVESTOR_KEY, provider);
 
@@ -25,14 +27,23 @@ const EIP712_TYPES = {
     { name: "extra", type: "string" },
   ],
 };
-const DOMAIN = { name: "x402", version: "2", chainId: 677 };
+const DOMAIN = { name: "x402", version: "2", chainId: CHAIN_ID };
 
 async function main() {
   // fund investor with USDT
   const usdt = new ethers.Contract(USDT, ["function mint(address,uint256)", "function approve(address,uint256)", "function balanceOf(address) view returns (uint256)", "function transfer(address,uint256)"], issuer);
-  const mintTx = await usdt.mint(investor.address, ethers.parseUnits("500", 6));
-  await mintTx.wait();
-  console.log("1. minted 500 USDT to investor");
+  if (PUBLIC_CHAIN) {
+    // Bohr/mainnet USDT has no mint: fund the investor from the issuer's balance
+    const gasTop = await issuer.sendTransaction({ to: investor.address, value: ethers.parseUnits("1", 18) });
+    await gasTop.wait();
+    const fund = await usdt.transfer(investor.address, ethers.parseUnits("500", 6));
+    await fund.wait();
+    console.log("1. funded investor 500 USDT + 1 BOT from issuer (public chain)");
+  } else {
+    const mintTx = await usdt.mint(investor.address, ethers.parseUnits("500", 6));
+    await mintTx.wait();
+    console.log("1. minted 500 USDT to investor");
+  }
 
   // probe the endpoint -> expect 402
   const docs = `Asset: Lagos Warehouse REIT (LAWR).

@@ -6,3 +6,4 @@ dist/
 *.tsbuildinfo
 packages/shared/contract-addresses.json
 .cache/
+.keys/

@@ -93,6 +93,7 @@ function loadArtifact(name: string): { abi: any[]; bytecode: string } {
 
 const RWATOKEN_ARTIFACT = loadArtifact("RwaToken");
 const DISTRIBUTOR_ARTIFACT = loadArtifact("RevenueDistributor");
+const BOTSCAN_URL = process.env.BOTSCAN_URL || "https://scan.botchain.ai";
 
 function getVerifierWallet() {
   const key = process.env.VERIFIER_PRIVATE_KEY || "";
@@ -201,7 +202,7 @@ app.get("/v1/attestations/:target", async (req, reply) => {
     reportUri: a.reportUri,
     attestedAt: Number(a.attestedAt),
     blockNumber: Number(a.blockNumber),
-    explorer: `https://scan.botchain.ai/address/${target}`,
+    explorer: `${BOTSCAN_URL}/address/${target}`,
   };
 });
 
@@ -315,7 +316,7 @@ app.post("/v1/issuances", { preHandler: x402Gate }, async (req, reply) => {
             distributor: distributorAddr,
             attestationTx: attestReceipt!.hash,
             listingTx: issueReceipt!.hash,
-            explorer: `https://scan.botchain.ai/tx/${issueReceipt!.hash}`,
+            explorer: `${BOTSCAN_URL}/tx/${issueReceipt!.hash}`,
           },
           issuance: hydrated,
         };
@@ -365,7 +366,7 @@ async function hydrateIssuance(registry: ethers.Contract, provider: ethers.JsonR
     accDividendPerToken: (accDividend as bigint).toString(),
     listedAt: Number(i.listedAt),
     blockNumber: Number(i.blockNumber),
-    explorer: `https://scan.botchain.ai/address/${i.token}`,
+    explorer: `${BOTSCAN_URL}/address/${i.token}`,
   };
 }
 

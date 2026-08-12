@@ -47,7 +47,7 @@ async function main() {
     out,
     JSON.stringify(
       {
-        chainId: 677,
+        chainId: Number((await ethers.provider.getNetwork()).chainId),
         attestationRegistry: attestationsAddr,
         issuanceRegistry: issuancesAddr,
         verifier,

@@ -2,7 +2,9 @@
 
 **AI-gated RWA issuance on BOT Chain.**
 
-VeriForge is the issuance and revenue layer for tokenized real-world assets on BOT Chain mainnet (chain 677). An issuer documents a real asset, the VeriForge AI compliance officer reviews it and produces a dossier with a 0-100 score, and only APPROVED issuances get listed on-chain. Investors buy units with USDT, revenue is deposited into a distributor, and holders claim their pro-rata share. The platform holds no funds.
+VeriForge is the issuance and revenue layer for tokenized real-world assets on BOT Chain. An issuer documents a real asset, the VeriForge AI compliance officer reviews it and produces a dossier with a 0-100 score, and only APPROVED issuances get listed on-chain. Investors buy units with USDT, revenue is deposited into a distributor, and holders claim their pro-rata share. The platform holds no funds.
+
+**Live on Bohr testnet (chain 968)** with the full loop verified on-chain. Targeting BOT mainnet (chain 677).
 
 Built for the **BOT Chain Builder Challenge #2 (AI × RWA)**, deadline Aug 20 2026.
 
@@ -37,7 +39,7 @@ The IssuanceRegistry calls the AttestationRegistry and reverts with `NotApproved
 
 ## The AI gate
 
-`apps/api/src/compliance.ts` sends the issuer's documentation to a real LLM (gpt-5.6-terra via the local freemodel proxy) and parses a structured dossier. Score >= 70 is APPROVED, 40-69 CAUTION, < 40 BLOCKED. If the LLM is unreachable the request fails loudly. No documentation at all scores 0 automatically.
+`apps/api/src/compliance.ts` sends the issuer's documentation to a real LLM and parses a structured dossier. Score >= 70 is APPROVED, 40-69 CAUTION, < 40 BLOCKED. If the LLM is unreachable the request fails loudly. No documentation at all scores 0 automatically. The gate runs a primary rail (`GATE_URL`) with an automatic failover (`FALLBACK_GATE_URL`), and the dossier records which model produced the verdict — no silent substitution.
 
 ## API
 
@@ -83,13 +85,28 @@ sudo systemctl enable --now veriforge-node veriforge-api veriforge-web
 cd packages/contracts && npx hardhat run scripts/deploy-local.ts --network localhost
 ```
 
-Deploy to BOT Chain mainnet:
+Deploy to a public BOT Chain (verified on Bohr testnet 968):
 
 ```bash
 cd packages/contracts
-cp .env.example .env      # set DEPLOYER_PRIVATE_KEY, VERIFIER_ADDRESS, BOTSCAN_API_KEY
+export DEPLOYER_PRIVATE_KEY=<key> BOT_TESTNET_RPC=https://rpc.bohr.life
+npx hardhat run scripts/deploy.ts --network botchain-testnet
+
+# mainnet (needs a funded wallet with real BOT)
 npx hardhat run scripts/deploy.ts --network botchain
 ```
+
+## Live on Bohr testnet (verified 2026-08-12)
+
+- RPC `https://rpc.bohr.life`, chain 968, explorer `https://scan.bohr.life`
+- USDT: `0x75edC9335175Fc0552D51D48439F229c10420fe3` (faucet: `https://faucet.botchain.ai/basic`)
+- AttestationRegistry: `0xF7ed39F4401062d9A5c45B7583d299887c5Cd560`
+- IssuanceRegistry: `0x9369c520DcE7DA60aB9B0EafcD618d8F3416ae65`
+- Example live issuance: LAWR token `0xdf0DE6b36718624d94dca1dab93df5d6c087801b` — see `https://scan.bohr.life/address/0xdf0DE6b36718624d94dca1dab93df5d6c087801b`
+
+Full e2e loop executed on Bohr: x402 pay (1 USDT) → AI gate (score 90, APPROVED) → deploy → list → buy 5 units for 50 USDT → issuer deposits 25 USDT revenue → holder claims 25 USDT. All steps confirmed on-chain.
+
+The stack is env-driven for either chain: `BOT_CHAIN_ID`, `BOT_RPC`, `BOT_USDT`, `X402_PAY_TO`, `BOTSCAN_URL` in `apps/api/.env`.
 
 ## Web
 

@@ -11,8 +11,11 @@
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { ethers } from "ethers";
 
+// BOT Chain: mainnet 677 (USDT 0xaBabc7Ddc03e501d190C676BF3d92ef0e6e87a3C)
+// or Bohr testnet 968 (USDT 0x75edC9335175Fc0552D51D48439F229c10420fe3).
+// Chain is configurable via BOT_CHAIN_ID, defaults to mainnet 677.
 const PAY_TO = process.env.X402_PAY_TO || "";
-const CHAIN_ID = 677;
+const CHAIN_ID = Number(process.env.BOT_CHAIN_ID || 677);
 const USDT = process.env.BOT_USDT || "0xaBabc7Ddc03e501d190C676BF3d92ef0e6e87a3C";
 const RPC = process.env.BOT_RPC || "https://rpc.botchain.ai";
 

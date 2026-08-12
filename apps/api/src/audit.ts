@@ -5,7 +5,7 @@
 import { ethers } from "ethers";
 
 export const BOT_RPC = process.env.BOT_RPC || "https://rpc.botchain.ai";
-export const BOT_CHAIN_ID = 677;
+export const BOT_CHAIN_ID = Number(process.env.BOT_CHAIN_ID || 677);
 export const BOT_USDT = process.env.BOT_USDT || "0xaBabc7Ddc03e501d190C676BF3d92ef0e6e87a3C";
 export const BOTSCAN_API = process.env.BOTSCAN_API || "https://scan.botchain.ai/api";
 
