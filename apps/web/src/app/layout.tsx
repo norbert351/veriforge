@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import WalletProvider from "@/components/wallet-provider";
 import "./globals.css";
+import "./motion.css";
 
 export const metadata: Metadata = {
   title: "VeriForge — AI-Gated RWA Issuance on BOT Chain",

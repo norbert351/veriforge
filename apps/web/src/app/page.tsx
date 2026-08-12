@@ -5,6 +5,7 @@ import { BrowserProvider, Contract, parseUnits, formatUnits } from "ethers";
 import { useAccount, useSwitchChain } from "wagmi";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { botChain } from "@/lib/wagmi-config";
+import Reveal from "@/components/Reveal";
 
 // BOT Chain mainnet (677) by default; Bohr testnet (968) via env at build time
 const BOT_CHAIN_ID = Number(process.env.NEXT_PUBLIC_BOT_CHAIN_ID || 677);
@@ -353,36 +354,68 @@ export default function Home() {
   }, [address]);
 
   return (
-    <main style={{ maxWidth: 860, margin: "0 auto", padding: "2rem 1.25rem" }}>
-      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
-        <div>
-          <h1 style={{ fontSize: "1.75rem", fontWeight: 800, letterSpacing: "-0.02em" }}>
+    <main>
+      {/* ── Nav ── */}
+      <header
+        style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 50,
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          padding: "0.9rem 1.5rem",
+          background: "rgba(10, 10, 20, 0.82)",
+          backdropFilter: "blur(10px)",
+          borderBottom: "1px solid rgba(255,255,255,0.07)",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ fontSize: "1.3rem", fontWeight: 800, letterSpacing: "-0.02em" }}>
             Veri<span style={{ color: "var(--vf-magenta)" }}>Forge</span>
-          </h1>
-          <p style={{ color: "#9ca3af", fontSize: "0.875rem" }}>AI-gated RWA issuance and revenue distribution on BOT Chain</p>
+          </div>
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <nav style={{ display: "flex", gap: 22, alignItems: "center" }}>
+          <a href="#assets" className="gr-link" style={{ fontSize: "0.9rem" }}>RWA Assets</a>
+          <a href="#how" className="gr-link" style={{ fontSize: "0.9rem" }}>How it works</a>
+          <a href="#marketplace" className="gr-link" style={{ fontSize: "0.9rem" }}>Marketplace</a>
           {chainId !== undefined && chainId !== null && chainId !== BOT_CHAIN_ID && (
-            <button onClick={switchToBot} style={btnStyle({ outline: true })}>
+            <button onClick={switchToBot} className="gr-btn gr-btn-outline" style={{ padding: "0.5rem 1rem", fontSize: "0.85rem" }}>
               Switch to BOT Chain
             </button>
           )}
-          <ConnectButton
-            chainStatus="icon"
-            showBalance={false}
-            accountStatus="address"
-          />
-        </div>
+          <ConnectButton chainStatus="icon" showBalance={false} accountStatus="address" />
+        </nav>
       </header>
 
-      <nav style={{ display: "flex", gap: 8, marginBottom: "1.5rem" }}>
-        <button onClick={() => setTab("market")} style={tabStyle(tab === "market")}>
-          Market
-        </button>
-        <button onClick={() => setTab("launch")} style={tabStyle(tab === "launch")}>
-          Launch an asset
-        </button>
-      </nav>
+      {/* ── Hero: motion-picture RWA showcase ── */}
+      <HeroSection />
+
+      {/* ── Film-style asset ticker ── */}
+      <Ticker />
+
+      {/* ── RWA asset classes ── */}
+      <AssetsSection />
+
+      {/* ── How it works / about the project ── */}
+      <HowItWorksSection />
+
+      {/* ── Marketplace (the product) ── */}
+      <section id="marketplace" className="vf-section" style={{ paddingTop: "2.5rem" }}>
+        <Reveal>
+          <p className="vf-eyebrow" style={{ marginBottom: 8 }}>The marketplace</p>
+          <h2 className="vf-h2" style={{ marginBottom: 20 }}>
+            Live on {CHAIN_LABEL}
+          </h2>
+        </Reveal>
+        <div style={{ display: "flex", gap: 8, marginBottom: "1.5rem" }}>
+          <button onClick={() => setTab("market")} style={tabStyle(tab === "market")}>
+            Market
+          </button>
+          <button onClick={() => setTab("launch")} style={tabStyle(tab === "launch")}>
+            Launch an asset
+          </button>
+        </div>
 
       {tab === "launch" && (
         <section style={{ background: "var(--vf-surface)", border: "1px solid #23233a", borderRadius: 16, padding: "1.5rem" }}>
@@ -444,8 +477,22 @@ export default function Home() {
         </section>
       )}
 
-      <footer style={{ marginTop: "3rem", color: "#6b7280", fontSize: "0.75rem", textAlign: "center" }}>
-        {CHAIN_LABEL} · chain {BOT_CHAIN_ID} · AI-gated issuance · revenue claims in USDT · platform holds no funds
+      </section>
+
+      <footer
+        style={{
+          marginTop: "3rem",
+          padding: "2.5rem 1.5rem 3rem",
+          color: "#6b7280",
+          fontSize: "0.8rem",
+          textAlign: "center",
+          borderTop: "1px solid rgba(255,255,255,0.07)",
+        }}
+      >
+        <div style={{ marginBottom: 6 }}>
+          Veri<span style={{ color: "var(--vf-magenta)" }}>Forge</span> — {CHAIN_LABEL} · chain {BOT_CHAIN_ID} · AI-gated issuance · revenue claims in USDT · platform holds no funds
+        </div>
+        <div style={{ fontSize: "0.72rem" }}>BOT Chain Builder Challenge #2 · AI × RWA · Deadline Aug 20 2026</div>
       </footer>
     </main>
   );
@@ -607,4 +654,200 @@ function tabStyle(active: boolean) {
     fontSize: "0.85rem",
     cursor: "pointer",
   };
+}
+
+/* ================= Landing sections (cinematic RWA showcase) ================= */
+
+const RWA_ASSETS = [
+  { img: "/images/rwa-estate.jpg", name: "Real Estate", desc: "Offices, warehouses and developments tokenized as yield-bearing units." },
+  { img: "/images/rwa-gold.jpg", name: "Gold & Metals", desc: "Bullion and precious metals with audited, verifiable custody." },
+  { img: "/images/rwa-commodities.jpg", name: "Commodities", desc: "Energy, metals and raw materials priced and settled on-chain." },
+  { img: "/images/rwa-port.jpg", name: "Logistics & Ports", desc: "Shipping, warehousing and supply-chain infrastructure cash flows." },
+  { img: "/images/rwa-farmland.jpg", name: "Agriculture & Land", desc: "Farmland and crop-yield assets backed by real harvest revenue." },
+  { img: "/images/rwa-art.jpg", name: "Art & Collectibles", desc: "Gallery-grade works opened to fractional, compliant ownership." },
+  { img: "/images/rwa-invoices.jpg", name: "Invoices & Trade", desc: "Invoice finance and trade receivables turned liquid on-chain." },
+  { img: "/images/rwa-documents.jpg", name: "Treasury & Paper", desc: "Bond-like instruments and document-backed fixed income." },
+];
+
+const PIPELINE_STEPS = [
+  { n: "01", t: "Document the asset", d: "Issuers file real terms, a revenue source and the supporting paperwork." },
+  { n: "02", t: "AI compliance gate", d: "A real LLM scores the documentation 0-100 and the verdict lands on-chain." },
+  { n: "03", t: "List on BOT Chain", d: "The issuance registry refuses anything that is not APPROVED. No bypass." },
+  { n: "04", t: "Buy with USDT", d: "Investors buy units and payment flows straight to the issuer." },
+  { n: "05", t: "Claim revenue", d: "Holders pull their pro-rata share of deposited revenue, anytime." },
+];
+
+const HERO_SLIDES = [
+  { src: "/images/hero-skyline.jpg", alt: "City skyline under a dramatic sky — real estate as an on-chain asset" },
+  { src: "/images/hero-port.jpg", alt: "Aerial view of a container port — logistics infrastructure tokenized" },
+  { src: "/images/hero-warehouse.jpg", alt: "Aerial view of industrial warehouses — yield-bearing property" },
+];
+
+function HeroSection() {
+  return (
+    <section className="vf-hero">
+      {HERO_SLIDES.map((s, i) => (
+        <div key={i} className="vf-hero-slide">
+          <img src={s.src} alt={s.alt} />
+        </div>
+      ))}
+      <div className="vf-hero-scrim" />
+      <div className="vf-hero-glow" />
+      <div
+        style={{
+          position: "relative",
+          zIndex: 2,
+          textAlign: "center",
+          padding: "7rem 1.5rem 8rem",
+          maxWidth: 920,
+        }}
+      >
+        <p className="vf-hero-eyebrow vf-eyebrow" style={{ marginBottom: 18 }}>
+          BOT Chain Builder Challenge · AI × RWA
+        </p>
+        <h1
+          className="vf-hero-title"
+          style={{
+            fontSize: "clamp(2.6rem, 7vw, 4.6rem)",
+            fontWeight: 900,
+            letterSpacing: "-0.03em",
+            lineHeight: 1.04,
+            margin: "0 0 1.25rem",
+          }}
+        >
+          Real-world assets,
+          <br />
+          forged <span style={{ color: "var(--vf-magenta)" }}>on-chain</span>.
+        </h1>
+        <p
+          className="vf-hero-sub"
+          style={{
+            fontSize: "clamp(1rem, 2.2vw, 1.25rem)",
+            color: "rgba(245,245,250,0.85)",
+            maxWidth: 640,
+            margin: "0 auto 2rem",
+            lineHeight: 1.65,
+          }}
+        >
+          Issuers document a real asset. The VeriForge AI compliance officer scores the
+          documentation, and only APPROVED issuances list on BOT Chain. Investors buy units
+          with USDT and claim revenue pro-rata. The platform never holds your funds.
+        </p>
+        <div className="vf-hero-cta" style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+          <a href="#assets" className="gr-btn">Explore RWA assets</a>
+          <a href="#marketplace" className="gr-btn gr-btn-outline">Enter the marketplace</a>
+        </div>
+        <div
+          className="vf-hero-chips"
+          style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap", marginTop: "2.2rem" }}
+        >
+          {["AI compliance gate", "USDT rails", "On-chain revenue", "Zero custody"].map((c) => (
+            <span
+              key={c}
+              style={{
+                fontSize: "0.78rem",
+                color: "rgba(245,245,250,0.82)",
+                border: "1px solid rgba(255,255,255,0.18)",
+                borderRadius: 999,
+                padding: "6px 14px",
+                background: "rgba(255,255,255,0.05)",
+                backdropFilter: "blur(4px)",
+              }}
+            >
+              {c}
+            </span>
+          ))}
+        </div>
+      </div>
+      <div className="vf-hero-bottom-fade" />
+      <div className="vf-scroll-cue" />
+    </section>
+  );
+}
+
+function Ticker() {
+  const items = [
+    "Real Estate", "Gold & Metals", "Logistics & Ports", "Agriculture & Land",
+    "Art & Collectibles", "Invoices & Trade", "Commodities", "Treasuries",
+  ];
+  return (
+    <div className="gr-ticker" aria-hidden="true">
+      <div className="gr-ticker-inner">
+        {[...items, ...items].map((t, i) => (
+          <span
+            key={i}
+            style={{
+              fontSize: "0.82rem",
+              fontWeight: 700,
+              letterSpacing: "0.22em",
+              textTransform: "uppercase",
+              color: "rgba(245,245,250,0.55)",
+            }}
+          >
+            {t} <span style={{ color: "var(--vf-magenta)" }}>◆</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AssetsSection() {
+  return (
+    <section id="assets" className="vf-section">
+      <Reveal>
+        <p className="vf-eyebrow" style={{ marginBottom: 8 }}>Asset classes</p>
+        <h2 className="vf-h2" style={{ marginBottom: 14 }}>RWA assets, tokenized on BOT Chain</h2>
+        <p style={{ color: "#9ca3af", maxWidth: 640, lineHeight: 1.7, marginBottom: "2.5rem" }}>
+          Anything with a real revenue story can be forged into units here: property, gold,
+          logistics, farmland, art, invoices. The AI gate reads the documentation first,
+          so what reaches the market is documented and verified.
+        </p>
+      </Reveal>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(235px, 1fr))", gap: 16 }}>
+        {RWA_ASSETS.map((a, i) => (
+          <Reveal key={a.name} delay={Math.min(i * 80, 480)} className="h-full">
+            <article className="gr-card" style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+              <div className="gr-zoom" style={{ aspectRatio: "16 / 10", overflow: "hidden" }}>
+                <img src={a.img} alt={a.name} loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              </div>
+              <div style={{ padding: "1.1rem 1.2rem 1.3rem" }}>
+                <h3 style={{ fontSize: "1.02rem", fontWeight: 800, margin: "0 0 6px" }}>{a.name}</h3>
+                <p style={{ color: "#9ca3af", fontSize: "0.85rem", lineHeight: 1.5, margin: 0 }}>{a.desc}</p>
+              </div>
+            </article>
+          </Reveal>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function HowItWorksSection() {
+  return (
+    <section id="how" className="vf-section" style={{ paddingTop: "2.5rem" }}>
+      <Reveal>
+        <p className="vf-eyebrow" style={{ marginBottom: 8 }}>About the project</p>
+        <h2 className="vf-h2" style={{ marginBottom: 14 }}>One pipeline, from paperwork to payout</h2>
+        <p style={{ color: "#9ca3af", maxWidth: 640, lineHeight: 1.7, marginBottom: "2.5rem" }}>
+          VeriForge is the issuance and revenue layer for tokenized real-world assets on BOT
+          Chain. The AI decision is enforced by the contracts, not by a rubber stamp: no
+          APPROVED verdict, no listing, no exception.
+        </p>
+      </Reveal>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(175px, 1fr))", gap: 14 }}>
+        {PIPELINE_STEPS.map((s, i) => (
+          <Reveal key={s.n} delay={Math.min(i * 90, 450)} className="h-full">
+            <div className="gr-card" style={{ padding: "1.4rem 1.3rem", height: "100%" }}>
+              <div style={{ fontSize: "0.8rem", fontWeight: 900, color: "var(--vf-magenta)", letterSpacing: "0.12em", marginBottom: 10 }}>
+                {s.n}
+              </div>
+              <h3 style={{ fontSize: "1rem", fontWeight: 800, margin: "0 0 8px" }}>{s.t}</h3>
+              <p style={{ color: "#9ca3af", fontSize: "0.85rem", lineHeight: 1.55, margin: 0 }}>{s.d}</p>
+            </div>
+          </Reveal>
+        ))}
+      </div>
+    </section>
+  );
 }

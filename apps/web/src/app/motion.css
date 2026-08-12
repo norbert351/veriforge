@@ -1,0 +1,316 @@
+/* ===== VeriForge motion system =====
+   Adapted from the HyperFrames animation grammar (spring-pop entrances,
+   stagger caps, press-release springs, bounded ambient glow) to live-page
+   CSS + IntersectionObserver. Transform/opacity only, reduced-motion safe.
+*/
+
+html {
+  scroll-behavior: smooth;
+}
+
+/* ---------- Entrance: spring-pop ---------- */
+@keyframes gr-spring-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* ---------- Hero crossfade slideshow (motion-picture hero) ---------- */
+@keyframes hero-fade {
+  0% { opacity: 0; }
+  3% { opacity: 1; }
+  30% { opacity: 1; }
+  33.33% { opacity: 0; }
+  100% { opacity: 0; }
+}
+
+@keyframes kenburns-a {
+  from { transform: scale(1) translate(0, 0); }
+  to { transform: scale(1.14) translate(-1.5%, -1.5%); }
+}
+
+@keyframes kenburns-b {
+  from { transform: scale(1.1) translate(-1.5%, -1%); }
+  to { transform: scale(1) translate(1.5%, 1%); }
+}
+
+@keyframes kenburns-c {
+  from { transform: scale(1.05) translate(1%, 0); }
+  to { transform: scale(1.18) translate(-1%, -1%); }
+}
+
+/* ---------- Ambient glow (bounded, never strobing) ---------- */
+@keyframes gr-breathe {
+  0%, 100% { opacity: 0.22; }
+  50% { opacity: 0.45; }
+}
+
+/* ---------- Ticker marquee (film-style asset strip) ---------- */
+@keyframes gr-ticker {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+/* ---------- Entrance helpers ---------- */
+.gr-spring-in {
+  animation: gr-spring-in 0.6s cubic-bezier(0.34, 1.3, 0.64, 1) both;
+  animation-delay: var(--gr-delay, 0ms);
+}
+
+/* ---------- Hero ---------- */
+.vf-hero {
+  position: relative;
+  min-height: 100svh;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vf-hero-slide {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  animation: hero-fade 24s infinite;
+  animation-timing-function: ease-in-out;
+}
+
+.vf-hero-slide img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  will-change: transform;
+}
+
+.vf-hero-slide:nth-child(1) { animation-delay: 0s; }
+.vf-hero-slide:nth-child(2) { animation-delay: 8s; }
+.vf-hero-slide:nth-child(3) { animation-delay: 16s; }
+
+.vf-hero-slide:nth-child(1) img { animation: kenburns-a 24s ease-out both; }
+.vf-hero-slide:nth-child(2) img { animation: kenburns-b 24s ease-out both; }
+.vf-hero-slide:nth-child(3) img { animation: kenburns-c 24s ease-out both; }
+
+/* Scrim: linear gradient + radial vignette so centered text stays readable */
+.vf-hero-scrim {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at center, rgba(8, 8, 18, 0.25) 0%, rgba(8, 8, 18, 0.72) 100%),
+    linear-gradient(180deg, rgba(8, 8, 18, 0.72) 0%, rgba(8, 8, 18, 0.38) 45%, rgba(10, 10, 20, 0.85) 100%);
+}
+
+.vf-hero-bottom-fade {
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 10rem;
+  background: linear-gradient(180deg, transparent, var(--vf-dark));
+  pointer-events: none;
+}
+
+.vf-hero-glow {
+  position: absolute;
+  width: 560px;
+  height: 560px;
+  left: 0;
+  right: 0;
+  margin: auto;
+  top: 8%;
+  background: radial-gradient(circle, rgba(216, 27, 96, 0.55), transparent 65%);
+  filter: blur(48px);
+  animation: gr-breathe 6s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* Hero content entrances: stagger the cascade (eyebrow 0, h1 90, sub 180, CTAs 270, chips 360) */
+.vf-hero-eyebrow { animation: gr-spring-in 0.6s cubic-bezier(0.34, 1.3, 0.64, 1) 0ms both; }
+.vf-hero-title { animation: gr-spring-in 0.6s cubic-bezier(0.34, 1.3, 0.64, 1) 90ms both; }
+.vf-hero-sub { animation: gr-spring-in 0.6s cubic-bezier(0.34, 1.3, 0.64, 1) 180ms both; }
+.vf-hero-cta { animation: gr-spring-in 0.6s cubic-bezier(0.34, 1.3, 0.64, 1) 270ms both; }
+.vf-hero-chips { animation: gr-spring-in 0.6s cubic-bezier(0.34, 1.3, 0.64, 1) 360ms both; }
+
+/* Scroll cue */
+@keyframes vf-scroll-cue {
+  0% { transform: translateY(0); opacity: 1; }
+  70% { transform: translateY(10px); opacity: 0; }
+  100% { transform: translateY(0); opacity: 0; }
+}
+.vf-scroll-cue {
+  position: absolute;
+  bottom: 2rem;
+  left: 50%;
+  margin-left: -11px;
+  width: 22px;
+  height: 36px;
+  border: 2px solid rgba(255, 255, 255, 0.55);
+  border-radius: 999px;
+  animation: vf-scroll-cue 2.2s ease-in-out infinite;
+}
+.vf-scroll-cue::after {
+  content: "";
+  position: absolute;
+  top: 7px;
+  left: 50%;
+  margin-left: -2px;
+  width: 4px;
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.85);
+}
+
+/* ---------- Buttons: press-release spring ---------- */
+.gr-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0.85rem 1.6rem;
+  border-radius: 12px;
+  font-weight: 700;
+  font-size: 0.95rem;
+  border: 1px solid transparent;
+  cursor: pointer;
+  background: var(--vf-magenta);
+  color: #fff;
+  transition:
+    transform 0.18s cubic-bezier(0.34, 1.3, 0.64, 1),
+    box-shadow 0.18s ease,
+    background 0.18s ease,
+    border-color 0.18s ease;
+  will-change: transform;
+}
+.gr-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 28px rgba(216, 27, 96, 0.35);
+}
+.gr-btn:active {
+  transform: scale(0.97);
+}
+.gr-btn-outline {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.25);
+  color: #f5f5fa;
+}
+.gr-btn-outline:hover {
+  border-color: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+/* ---------- Cards: hover lift + image zoom ---------- */
+.gr-card {
+  position: relative;
+  border-radius: 18px;
+  overflow: hidden;
+  background: var(--vf-surface);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition:
+    transform 0.22s cubic-bezier(0.34, 1.3, 0.64, 1),
+    box-shadow 0.22s ease,
+    border-color 0.22s ease;
+  will-change: transform;
+}
+.gr-card:hover {
+  transform: translateY(-4px);
+  border-color: rgba(216, 27, 96, 0.45);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.5);
+}
+.gr-zoom {
+  overflow: hidden;
+}
+.gr-zoom img {
+  transition: transform 0.6s cubic-bezier(0.34, 1.3, 0.64, 1);
+  will-change: transform;
+}
+.gr-card:hover .gr-zoom img {
+  transform: scale(1.08);
+}
+
+/* ---------- Links: underline sweep ---------- */
+.gr-link {
+  position: relative;
+  color: #f5f5fa;
+  text-decoration: none;
+  transition: color 0.18s ease;
+}
+.gr-link::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -3px;
+  height: 2px;
+  background: var(--vf-magenta);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.25s cubic-bezier(0.34, 1.3, 0.64, 1);
+}
+.gr-link:hover {
+  color: #fff;
+}
+.gr-link:hover::after {
+  transform: scaleX(1);
+}
+
+/* ---------- Ticker ---------- */
+.gr-ticker {
+  overflow: hidden;
+  white-space: nowrap;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(19, 19, 34, 0.7);
+  backdrop-filter: blur(6px);
+}
+.gr-ticker-inner {
+  display: inline-flex;
+  gap: 3rem;
+  padding: 0.9rem 0;
+  animation: gr-ticker 30s linear infinite;
+  will-change: transform;
+}
+.gr-ticker:hover .gr-ticker-inner {
+  animation-play-state: paused;
+}
+
+/* ---------- Section helpers ---------- */
+.vf-section {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 5.5rem 1.5rem;
+}
+.vf-eyebrow {
+  color: var(--vf-magenta);
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.vf-h2 {
+  font-size: clamp(1.8rem, 4vw, 2.6rem);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+/* ---------- Reduced motion: kill everything, content visible ---------- */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .vf-hero-slide:nth-child(n + 2) {
+    display: none;
+  }
+  .vf-hero-slide:nth-child(1) {
+    opacity: 1;
+  }
+}
