@@ -2,8 +2,10 @@
 // compliance dossier with a verdict. The verdict drives the on-chain listing:
 // IssuanceRegistry refuses anything that is not APPROVED.
 //
-// The gate is a REAL LLM call (gpt-5.6-terra via the local freemodel proxy).
-// No fabricated scores: if the LLM is unreachable, the gate fails loudly.
+// Primary rail: Claude via the AgentRouter gateway (Anthropic Messages API:
+// POST {base}/v1/messages, Bearer auth, anthropic-version header, system in
+// the top-level "system" field, max_tokens required). The gate is a REAL LLM
+// call. No fabricated scores: if the LLM is unreachable, the gate fails loudly.
 
 export type Verdict = 0 | 1 | 2; // BLOCKED / CAUTION / APPROVED
 
@@ -23,13 +25,17 @@ export interface ComplianceDossier {
   model: string;
 }
 
+// ─── Rails ────────────────────────────────────────────────────────────────
+// 1. PRIMARY: Claude via AgentRouter (Anthropic Messages API format).
+const ANTHROPIC_KEY = process.env.ANTHROPIC_AUTH_TOKEN || "";
+const ANTHROPIC_BASE = process.env.ANTHROPIC_BASE_URL || "https://agentrouter.org";
+const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || "claude-opus-4-8";
+// 2. Legacy OpenAI-compatible proxy rail (freemodel) — availability fallback.
 const GATE_URL = process.env.GATE_URL || "http://localhost:8799/v1/chat/completions";
 const GATE_MODEL = process.env.GATE_MODEL || "gpt-5.6-terra";
 const GATE_KEY = process.env.FREEMODEL_API_KEY || "";
-// Fallback rail: if the primary gate upstream is down (container
-// provisioning, outage, rate limit), the gate fails over to a second
-// OpenAI-compatible endpoint so issuance can keep working. The dossier
-// records which model actually produced the verdict.
+// 3. OpenRouter — last-chance fallback. The dossier records which rail/model
+// actually produced the verdict, so there is no silent substitution.
 const FALLBACK_URL = process.env.FALLBACK_GATE_URL || "";
 const FALLBACK_MODEL = process.env.FALLBACK_GATE_MODEL || "openai/gpt-4o-mini";
 const FALLBACK_KEY = process.env.FALLBACK_GATE_KEY || process.env.OPENROUTER_API_KEY || "";
@@ -59,7 +65,7 @@ function parseDossier(text: string): ComplianceDossier | null {
     if (score >= APPROVE_THRESHOLD) verdict = 2;
     else if (score >= CAUTION_THRESHOLD) verdict = 1;
     else verdict = 0;
-    return { score, verdict, findings, summary, checkedAt: Math.floor(Date.now() / 1000), model: GATE_MODEL };
+    return { score, verdict, findings, summary, checkedAt: Math.floor(Date.now() / 1000), model: "" };
   } catch {
     return null;
   }
@@ -73,32 +79,36 @@ export interface AssetMetadata {
   backingProofUri?: string; // link to the proof document
 }
 
-function buildPrompt(doc: {
-  name: string;
-  symbol: string;
-  docsText: string;
-  docsUri?: string;
-  assetMetadata?: AssetMetadata;
-}): string {
+// Static instructions + schema go in the Anthropic top-level "system" field.
+function buildSystemPrompt(): string {
   return `You are the VeriForge AI compliance officer for BOT Chain, an RWA issuance platform.
 Review the issuer's documentation for a tokenized real-world asset issuance and produce a compliance dossier.
 Score 0-100 where >=70 is APPROVED, 40-69 is CAUTION, <40 is BLOCKED.
 
 Check for: clear asset backing, defined terms and price, revenue model, jurisdiction/legal entity, no red flags (missing docs, vague promises, no revenue model, no backing).
 
-Structured asset declaration (issuer-signed, committed on-chain):
+The issuer also submits a structured asset declaration (signed, committed on-chain). Cross-check it against the free-text documentation. Flag CONSISTENCY ISSUES:
+missing asset class, jurisdiction without a legal entity, backing proof type "none",
+or docs that describe a different asset than the declaration. These are red flags.
+
+Return ONLY JSON, no prose, no markdown fences:
+{"score": <0-100 number>, "summary": "<1-2 sentence verdict>", "findings": [{"id":"<kebab-id>","severity":"critical|high|medium|low|info","title":"<short>","detail":"<specific>"}]}`;
+}
+
+// The issuance content goes in the user message.
+function buildUserPrompt(doc: {
+  name: string;
+  symbol: string;
+  docsText: string;
+  docsUri?: string;
+  assetMetadata?: AssetMetadata;
+}): string {
+  return `Structured asset declaration:
 - Asset class: ${doc.assetMetadata?.assetClass || "NOT PROVIDED"}
 - Jurisdiction: ${doc.assetMetadata?.jurisdiction || "NOT PROVIDED"}
 - Legal entity: ${doc.assetMetadata?.legalEntity || "NOT PROVIDED"}
 - Backing proof type: ${doc.assetMetadata?.backingProofType || "NOT PROVIDED"}
 - Proof URI: ${doc.assetMetadata?.backingProofUri || "none"}
-
-Cross-check the structured declaration against the free-text documentation. Flag CONSISTENCY ISSUES:
-missing asset class, jurisdiction without a legal entity, backing proof type "none",
-or docs that describe a different asset than the declaration. These are red flags.
-
-Return ONLY JSON:
-{"score": <0-100 number>, "summary": "<1-2 sentence verdict>", "findings": [{"id":"<kebab-id>","severity":"critical|high|medium|low|info","title":"<short>","detail":"<specific>"}]}
 
 Issuance name: ${doc.name} (${doc.symbol})
 Documentation URI: ${doc.docsUri || "none"}
@@ -130,26 +140,67 @@ export async function runComplianceGate(doc: {
       ],
       summary: "BLOCKED — no documentation to review.",
       checkedAt: Math.floor(Date.now() / 1000),
-      model: GATE_MODEL,
+      model: ANTHROPIC_MODEL,
     };
   }
 
-  const prompt = buildPrompt(doc);
-  const payload = {
-    model: GATE_MODEL,
-    messages: [{ role: "user", content: prompt }],
-    max_tokens: 900,
-    temperature: 0.2,
-  };
+  const system = buildSystemPrompt();
+  const userContent = buildUserPrompt(doc);
+  const userMessages = [{ role: "user", content: userContent }];
 
-  async function callGate(url: string, model: string, key: string): Promise<ComplianceDossier> {
+  function fromText(text: string, model: string): ComplianceDossier {
+    const dossier = parseDossier(text);
+    if (!dossier) {
+      throw new Error("AI gate returned unparseable output — refusing to fabricate a verdict.");
+    }
+    dossier.model = model;
+    return dossier;
+  }
+
+  // Rail 1: Claude via AgentRouter (Anthropic Messages API).
+  async function callAnthropic(): Promise<ComplianceDossier> {
+    if (!ANTHROPIC_KEY) throw new Error("ANTHROPIC_AUTH_TOKEN not set");
+    const res = await fetch(`${ANTHROPIC_BASE}/v1/messages`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${ANTHROPIC_KEY}`,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: ANTHROPIC_MODEL,
+        max_tokens: 900,
+        temperature: 0.2,
+        system,
+        messages: userMessages,
+      }),
+      signal: AbortSignal.timeout(90000),
+    });
+
+    if (!res.ok) {
+      throw new Error(`AgentRouter upstream error ${res.status}: ${await res.text().catch(() => "")}`);
+    }
+
+    const json: any = await res.json();
+    const text: string = json?.content?.find((b: any) => b?.type === "text")?.text || "";
+    if (!text) throw new Error("AgentRouter returned no text content block");
+    return fromText(text, ANTHROPIC_MODEL);
+  }
+
+  // Rail 2: OpenAI-compatible proxy (freemodel).
+  async function callOpenAI(url: string, model: string, key: string): Promise<ComplianceDossier> {
     const res = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         ...(key ? { Authorization: `Bearer ${key}` } : {}),
       },
-      body: JSON.stringify({ ...payload, model }),
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "system", content: system }, ...userMessages],
+        max_tokens: 900,
+        temperature: 0.2,
+      }),
       signal: AbortSignal.timeout(60000),
     });
 
@@ -159,27 +210,28 @@ export async function runComplianceGate(doc: {
 
     const json: any = await res.json();
     const content: string = json?.choices?.[0]?.message?.content || "";
-    const dossier = parseDossier(content);
-    if (!dossier) {
-      throw new Error("AI gate returned unparseable output — refusing to fabricate a verdict.");
-    }
-    dossier.model = model;
-    return dossier;
+    return fromText(content, model);
   }
 
-  // Primary rail first, fallback rail second. Both fail loudly.
+  // Claude first, then the legacy proxy, then OpenRouter. All fail loudly.
   try {
-    return await callGate(GATE_URL, GATE_MODEL, GATE_KEY);
+    return await callAnthropic();
   } catch (primaryErr) {
-    if (FALLBACK_URL) {
-      try {
-        return await callGate(FALLBACK_URL, FALLBACK_MODEL, FALLBACK_KEY);
-      } catch (fallbackErr) {
-        throw new Error(
-          `AI gate unreachable (primary: ${(primaryErr as Error).message}; fallback: ${(fallbackErr as Error).message})`
-        );
+    try {
+      return await callOpenAI(GATE_URL, GATE_MODEL, GATE_KEY);
+    } catch (proxyErr) {
+      if (FALLBACK_URL) {
+        try {
+          return await callOpenAI(FALLBACK_URL, FALLBACK_MODEL, FALLBACK_KEY);
+        } catch (fallbackErr) {
+          throw new Error(
+            `AI gate unreachable (claude: ${(primaryErr as Error).message}; proxy: ${(proxyErr as Error).message}; fallback: ${(fallbackErr as Error).message})`
+          );
+        }
       }
+      throw new Error(
+        `AI gate unreachable (claude: ${(primaryErr as Error).message}; proxy: ${(proxyErr as Error).message})`
+      );
     }
-    throw primaryErr;
   }
 }
