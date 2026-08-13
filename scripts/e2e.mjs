@@ -69,6 +69,7 @@ Terms: 100,000 units at 10 USDT each. Quarterly buyback option at par plus accru
     legalEntity: "Lagos Warehouse Holdings Ltd",
     backingProofType: "title-deed + independent valuation",
     backingProofUri: "ipfs://QmValuationLAWR2026",
+    assetPhotos: [],
   };
   const payloadJson = JSON.stringify({
     name: "Lagos Warehouse REIT",

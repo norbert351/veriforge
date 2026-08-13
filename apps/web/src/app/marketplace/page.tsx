@@ -123,6 +123,25 @@ function getEth() {
   return (window as any).ethereum || null;
 }
 
+// Upload proof files (PDF/images) → content-hashed URL on the API. The URL
+// goes into the signed declaration, so the committed payload references a
+// real file that anyone can open.
+async function uploadFiles(files: File[], kind: string): Promise<{ url: string; sha256: string; name: string; size: number }[]> {
+  const out: { url: string; sha256: string; name: string; size: number }[] = [];
+  for (const f of files) {
+    const fd = new FormData();
+    fd.append("file", f);
+    fd.append("kind", kind);
+    const res = await fetch(`${API}/v1/uploads`, { method: "POST", body: fd });
+    if (!res.ok) throw new Error(`Upload failed (${res.status}): ${f.name}`);
+    const j = await res.json();
+    if (!j?.ok || !j.files?.[0]) throw new Error(`Upload rejected: ${f.name}`);
+    const u = j.files[0];
+    out.push({ url: u.url, sha256: u.sha256, name: f.name, size: u.size });
+  }
+  return out;
+}
+
 export default function Marketplace() {
   const { address } = useAccount();
   const [tab, setTab] = useState<"launch" | "market">("market");
@@ -138,6 +157,10 @@ export default function Marketplace() {
   const [fLegalEntity, setFLegalEntity] = useState("");
   const [fProofType, setFProofType] = useState("");
   const [fProofUri, setFProofUri] = useState("");
+  const [fProofFile, setFProofFile] = useState<{ url: string; sha256: string; name: string } | null>(null);
+  const [fDocsFile, setFDocsFile] = useState<{ url: string; sha256: string; name: string } | null>(null);
+  const [fPhotos, setFPhotos] = useState<{ url: string; sha256: string; name: string }[]>([]);
+  const [uploading, setUploading] = useState<string>("");
   const [declSignature, setDeclSignature] = useState("");
   const [declAddress, setDeclAddress] = useState("");
   const [signing, setSigning] = useState(false);
@@ -199,22 +222,27 @@ export default function Marketplace() {
       jurisdiction: fJurisdiction.trim(),
       legalEntity: fLegalEntity.trim(),
       backingProofType: fProofType.trim(),
-      backingProofUri: fProofUri.trim(),
+      backingProofUri: fProofUri.trim() || fProofFile?.url || "",
+      assetPhotos: fPhotos.map((p) => p.url),
     };
     return JSON.stringify({
       name: fName.trim(),
       symbol: fSymbol.trim().toUpperCase(),
       docsText: fDocs.trim(),
-      docsUri: fDocsUri.trim(),
+      docsUri: fDocsUri.trim() || fDocsFile?.url || "",
       assetMetadata,
     });
-  }, [fName, fSymbol, fDocs, fDocsUri, fAssetClass, fJurisdiction, fLegalEntity, fProofType, fProofUri]);
+  }, [fName, fSymbol, fDocs, fDocsUri, fDocsFile, fAssetClass, fJurisdiction, fLegalEntity, fProofType, fProofUri, fProofFile, fPhotos]);
 
   // The issuer signs the exact declaration that gets committed on-chain.
   // A tampered field changes the hash, breaks the signature, and the API rejects it.
   const signDeclaration = useCallback(async () => {
     if (!fName || !fSymbol || !fDocs || !fAssetClass || !fJurisdiction || !fLegalEntity || !fProofType) {
       setError("Fill all required fields before signing the declaration.");
+      return;
+    }
+    if (!fProofFile && !fProofUri.trim()) {
+      setError("Upload a proof document or paste a proof URL before signing.");
       return;
     }
     const eth = getEth();
@@ -239,9 +267,63 @@ export default function Marketplace() {
     }
   }, [fName, fSymbol, fDocs, fAssetClass, fJurisdiction, fLegalEntity, fProofType, buildPayloadJson]);
 
+  const handleProofUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files?.length) return;
+    setUploading("proof");
+    setError("");
+    try {
+      const up = await uploadFiles(Array.from(files), "proof");
+      setFProofFile(up[0]);
+      setFProofUri("");
+    } catch (err: any) {
+      setError(err?.message || "Proof upload failed");
+    } finally {
+      setUploading("");
+      e.target.value = "";
+    }
+  };
+
+  const handleDocsUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files?.length) return;
+    setUploading("docs");
+    setError("");
+    try {
+      const up = await uploadFiles(Array.from(files), "docs");
+      setFDocsFile(up[0]);
+      setFDocsUri("");
+    } catch (err: any) {
+      setError(err?.message || "Docs upload failed");
+    } finally {
+      setUploading("");
+      e.target.value = "";
+    }
+  };
+
+  const handlePhotosUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files?.length) return;
+    setUploading("photos");
+    setError("");
+    try {
+      const up = await uploadFiles(Array.from(files), "photo");
+      setFPhotos((prev) => [...prev, ...up].slice(0, 6));
+    } catch (err: any) {
+      setError(err?.message || "Photo upload failed");
+    } finally {
+      setUploading("");
+      e.target.value = "";
+    }
+  };
+
   const launchIssuance = useCallback(async () => {
     if (!fName || !fSymbol || !fPrice || !fDocs || !fAssetClass || !fJurisdiction || !fLegalEntity || !fProofType) {
       setError("All fields are required. The AI gate reviews your documentation and declaration.");
+      return;
+    }
+    if (!fProofFile && !fProofUri.trim()) {
+      setError("Upload a proof document or paste a proof URL first.");
       return;
     }
     if (!declSignature || !declAddress) {
@@ -258,7 +340,8 @@ export default function Marketplace() {
         jurisdiction: fJurisdiction.trim(),
         legalEntity: fLegalEntity.trim(),
         backingProofType: fProofType.trim(),
-        backingProofUri: fProofUri.trim(),
+        backingProofUri: fProofUri.trim() || fProofFile?.url || "",
+        assetPhotos: fPhotos.map((p) => p.url),
       };
       // x402 checkout: probe → 402 → wallet signs + transfers USDT → replay.
       const res = await paidPost("/v1/issuances", {
@@ -266,7 +349,7 @@ export default function Marketplace() {
         symbol: fSymbol.trim().toUpperCase(),
         pricePerTokenUsdt: parseFloat(fPrice),
         docsText: fDocs.trim(),
-        docsUri: fDocsUri.trim(),
+        docsUri: fDocsUri.trim() || fDocsFile?.url || "",
         assetMetadata,
         issuerAddress: declAddress,
         issuerSignature: declSignature,
@@ -281,6 +364,7 @@ export default function Marketplace() {
       if (body?.listed) {
         setFName(""); setFSymbol(""); setFPrice(""); setFDocs(""); setFDocsUri("");
         setFAssetClass(""); setFJurisdiction(""); setFLegalEntity(""); setFProofType(""); setFProofUri("");
+        setFProofFile(null); setFDocsFile(null); setFPhotos([]);
         setDeclSignature(""); setDeclAddress("");
         loadIssuances();
       }
@@ -289,7 +373,7 @@ export default function Marketplace() {
     } finally {
       setLaunching(false);
     }
-  }, [fName, fSymbol, fPrice, fDocs, fDocsUri, fAssetClass, fJurisdiction, fLegalEntity, fProofType, fProofUri, declSignature, declAddress, loadIssuances]);
+  }, [fName, fSymbol, fPrice, fDocs, fDocsUri, fDocsFile, fAssetClass, fJurisdiction, fLegalEntity, fProofType, fProofUri, fProofFile, fPhotos, declSignature, declAddress, loadIssuances]);
 
   const buyUnits = useCallback(
     async (iss: Issuance, usdtAmount: string) => {
@@ -436,7 +520,7 @@ export default function Marketplace() {
           <section style={{ background: "var(--vf-surface)", border: "1px solid #23233a", borderRadius: 16, padding: "1.5rem" }}>
             <h2 style={{ fontSize: "1.1rem", fontWeight: 700, marginBottom: 4 }}>Tokenize a real-world asset</h2>
             <p style={{ color: "#9ca3af", fontSize: "0.85rem", marginBottom: 16 }}>
-              VeriForge&apos;s AI compliance officer reviews your documentation. Only issuances that pass the gate get listed on-chain — the registry refuses the rest.
+              Upload the actual proof documents and asset photos. The AI compliance officer reads the file contents, checks them against your declaration, and only APPROVED issuances get listed on-chain. Files are stored content-hashed and the reviewed payload is committed on-chain.
             </p>
             <div className="vf-row" style={{ marginBottom: 10 }}>
               <input value={fName} onChange={(e) => setFName(e.target.value)} placeholder="Asset name (e.g. Lagos Warehouse REIT)" style={inputStyle} />
@@ -451,8 +535,61 @@ export default function Marketplace() {
               <input value={fLegalEntity} onChange={(e) => setFLegalEntity(e.target.value)} placeholder="Legal entity (registered company name)" style={inputStyle} />
               <input value={fProofType} onChange={(e) => setFProofType(e.target.value)} placeholder="Backing proof (title-deed, escrow, invoice…)" style={inputStyle} />
             </div>
-            <input value={fProofUri} onChange={(e) => setFProofUri(e.target.value)} placeholder="Proof URI (optional, link to the backing document)" style={{ ...inputStyle, marginBottom: 10, width: "100%" }} />
-            <input value={fDocsUri} onChange={(e) => setFDocsUri(e.target.value)} placeholder="Docs URI (optional, e.g. ipfs://…)" style={{ ...inputStyle, marginBottom: 10, width: "100%" }} />
+            <div style={{ marginBottom: 10 }}>
+              <div className="vf-row" style={{ gap: 10, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
+                <label style={{ ...btnStyle({ outline: true, disabled: uploading === "proof" }), display: "inline-block", cursor: uploading ? "not-allowed" : "pointer" }}>
+                  {uploading === "proof" ? "Uploading…" : fProofFile ? "Replace proof document" : "⬆ Upload proof document (PDF / image)"}
+                  <input type="file" accept="application/pdf,image/png,image/jpeg,image/webp" style={{ display: "none" }} onChange={handleProofUpload} disabled={!!uploading} />
+                </label>
+                {fProofFile ? (
+                  <a href={fProofFile.url} target="_blank" rel="noopener noreferrer" style={{ color: "#10b981", fontSize: "0.8rem", wordBreak: "break-all" }}>
+                    ✓ {fProofFile.name} · sha256 {fProofFile.sha256.slice(0, 10)}… ↗
+                  </a>
+                ) : (
+                  <span style={{ color: "#6b7280", fontSize: "0.75rem" }}>title deed, valuation, invoice. The AI gate reads PDF text from the file</span>
+                )}
+              </div>
+              <input value={fProofUri} onChange={(e) => setFProofUri(e.target.value)} placeholder="…or paste a proof URL instead (optional)" style={{ ...inputStyle, width: "100%" }} />
+            </div>
+            <div style={{ marginBottom: 10 }}>
+              <div className="vf-row" style={{ gap: 10, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
+                <label style={{ ...btnStyle({ outline: true, disabled: uploading === "docs" }), display: "inline-block", cursor: uploading ? "not-allowed" : "pointer" }}>
+                  {uploading === "docs" ? "Uploading…" : fDocsFile ? "Replace documentation file" : "⬆ Upload documentation (PDF)"}
+                  <input type="file" accept="application/pdf" style={{ display: "none" }} onChange={handleDocsUpload} disabled={!!uploading} />
+                </label>
+                {fDocsFile ? (
+                  <a href={fDocsFile.url} target="_blank" rel="noopener noreferrer" style={{ color: "#10b981", fontSize: "0.8rem", wordBreak: "break-all" }}>
+                    ✓ {fDocsFile.name} · sha256 {fDocsFile.sha256.slice(0, 10)}… ↗
+                  </a>
+                ) : (
+                  <span style={{ color: "#6b7280", fontSize: "0.75rem" }}>full offering docs — the AI gate reviews the actual file</span>
+                )}
+              </div>
+              <input value={fDocsUri} onChange={(e) => setFDocsUri(e.target.value)} placeholder="…or paste a docs URL instead (optional)" style={{ ...inputStyle, width: "100%" }} />
+            </div>
+            <div style={{ marginBottom: 10 }}>
+              <div className="vf-row" style={{ gap: 10, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
+                <label style={{ ...btnStyle({ outline: true, disabled: uploading === "photos" }), display: "inline-block", cursor: uploading ? "not-allowed" : "pointer" }}>
+                  {uploading === "photos" ? "Uploading…" : "⬆ Upload asset photos"}
+                  <input type="file" accept="image/png,image/jpeg,image/webp" multiple style={{ display: "none" }} onChange={handlePhotosUpload} disabled={!!uploading} />
+                </label>
+                {fPhotos.length > 0 && (
+                  <span style={{ fontSize: "0.78rem", color: "#10b981" }}>
+                    ✓ {fPhotos.length} photo{fPhotos.length > 1 ? "s" : ""} attached
+                  </span>
+                )}
+                <span style={{ color: "#6b7280", fontSize: "0.75rem" }}>up to 6 photos of the asset — URLs go into the signed declaration</span>
+              </div>
+              {fPhotos.length > 0 && (
+                <div className="vf-row" style={{ gap: 8, flexWrap: "wrap" }}>
+                  {fPhotos.map((p) => (
+                    <a key={p.url} href={p.url} target="_blank" rel="noopener noreferrer" title={p.name}>
+                      <img src={p.url} alt={p.name} style={{ width: 64, height: 64, objectFit: "cover", borderRadius: 8, border: "1px solid #2c2c47" }} />
+                    </a>
+                  ))}
+                </div>
+              )}
+            </div>
             <textarea
               value={fDocs}
               onChange={(e) => setFDocs(e.target.value)}

@@ -7,3 +7,4 @@ dist/
 packages/shared/contract-addresses.json
 .cache/
 .keys/
+apps/api/uploads/

@@ -5,12 +5,16 @@
 //   GET  /v1/issuances/:id             — free, single issuance
 //   GET  /v1/issuances/:id/claimable/:holder — free, USDT claimable
 //   GET  /v1/attestations/:target      — free, attestation read
+//   POST /v1/uploads                   — free, multipart proof/docs/photo upload
+//   GET  /uploads/*                    — free, served proof files (content-hashed)
 //   POST /v1/issuances                 — 1 USDT (x402): AI gate + deploy + list
 
 import "dotenv/config";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import multipart from "@fastify/multipart";
 import { ethers } from "ethers";
+import { createHash } from "node:crypto";
 import { x402Gate } from "./x402.js";
 import { getProvider, BOT_CHAIN_ID } from "./audit.js";
 import { runComplianceGate, type ComplianceDossier } from "./compliance.js";
@@ -19,6 +23,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const UPLOAD_DIR = path.join(__dirname, "../uploads");
 
 const app = Fastify({ logger: true });
 
@@ -35,6 +40,7 @@ class HttpError extends Error {
 }
 
 await app.register(cors, { origin: true });
+await app.register(multipart, { limits: { fileSize: 15 * 1024 * 1024, files: 6 } });
 
 // ─── Shared config ────────────────────────────────────────────────────────
 
@@ -209,6 +215,86 @@ app.get("/v1/attestations/:target", async (req, reply) => {
   };
 });
 
+// ─── Uploads: proof files, asset photos, docs (content-hashed, served) ────
+
+const MIME_EXT: Record<string, string> = {
+  "application/pdf": "pdf",
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/webp": "webp",
+  "text/plain": "txt",
+  "application/msword": "doc",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+};
+
+app.post("/v1/uploads", async (req, reply) => {
+  if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+  const parts = req.parts();
+  const uploaded: any[] = [];
+  for await (const part of parts) {
+    if (part.type !== "file") continue; // skip non-file fields (type: 'field')
+    const mime = (part.mimetype || "").toLowerCase();
+    const ext = MIME_EXT[mime];
+    if (!ext) {
+      part.file.resume();
+      throw new HttpError(400, { error: "unsupported_file", message: `unsupported type ${mime || "unknown"}` });
+    }
+    const chunks: Buffer[] = [];
+    for await (const chunk of part.file) chunks.push(chunk as Buffer);
+    const buf = Buffer.concat(chunks);
+    if (buf.length === 0) throw new HttpError(400, { error: "empty_file", message: "file is empty" });
+
+    const sha = createHash("sha256").update(buf).digest("hex");
+    const name = `${sha}.${ext}`;
+    const dest = path.join(UPLOAD_DIR, name);
+    if (!fs.existsSync(dest)) fs.writeFileSync(dest, buf); // content-addressed: dedupe
+
+    const kind = String((part.fields?.kind as any)?.value || "other");
+    uploaded.push({
+      kind,
+      url: `/uploads/${name}`,
+      sha256: sha,
+      contentType: mime,
+      size: buf.length,
+    });
+  }
+  if (uploaded.length === 0) throw new HttpError(400, { error: "no_file", message: "send a file in multipart form" });
+  return reply.send({ ok: true, files: uploaded });
+});
+
+app.get("/uploads/*", async (req, reply) => {
+  const p = String((req.params as any)["*"] || "");
+  // content-hashed names only: /^[a-f0-9]{64}\.(pdf|png|jpg|webp|txt|doc|docx)$/
+  if (!/^[a-f0-9]{64}\.(pdf|png|jpg|webp|txt|doc|docx)$/.test(p)) {
+    return reply.status(404).send({ error: "not_found" });
+  }
+  const file = path.join(UPLOAD_DIR, p);
+  if (!fs.existsSync(file)) return reply.status(404).send({ error: "not_found" });
+  const ext = p.split(".").pop();
+  const mime = ext === "pdf" ? "application/pdf" : ext === "txt" ? "text/plain" : `image/${ext === "jpg" ? "jpeg" : ext}`;
+  const buf = fs.readFileSync(file);
+  return reply.type(mime).header("Cache-Control", "public, max-age=31536000, immutable").send(buf);
+});
+
+// If a reviewed URI points at an uploaded PDF, pull its text so the AI gate
+// reads the ACTUAL proof document, not just what the issuer typed.
+async function extractUploadText(uri: string | undefined): Promise<string> {
+  if (!uri) return "";
+  const m = String(uri).match(/^\/uploads\/([a-f0-9]{64})\.pdf$/);
+  if (!m) return "";
+  const file = path.join(UPLOAD_DIR, `${m[1]}.pdf`);
+  if (!fs.existsSync(file)) return "";
+  try {
+    const { PDFParse } = await import("pdf-parse");
+    const parser = new PDFParse({ data: fs.readFileSync(file) });
+    const raw = await parser.getText();
+    const text = typeof raw === "string" ? raw : String((raw as any)?.text || "");
+    return text.trim().slice(0, 8000);
+  } catch {
+    return "";
+  }
+}
+
 app.post("/v1/issuances", { preHandler: x402Gate }, async (req, reply) => {
   // One issuance pipeline at a time — the verifier wallet signs sequential txs.
   // The pipeline returns plain data or throws HttpError; the handler replies
@@ -227,6 +313,7 @@ app.post("/v1/issuances", { preHandler: x402Gate }, async (req, reply) => {
           legalEntity?: string;
           backingProofType?: string;
           backingProofUri?: string;
+          assetPhotos?: string[];
         };
         issuerAddress?: string;
         issuerSignature?: string;
@@ -246,6 +333,9 @@ app.post("/v1/issuances", { preHandler: x402Gate }, async (req, reply) => {
         legalEntity: (body.assetMetadata?.legalEntity || "").trim(),
         backingProofType: (body.assetMetadata?.backingProofType || "").trim(),
         backingProofUri: (body.assetMetadata?.backingProofUri || "").trim(),
+        assetPhotos: Array.isArray(body.assetMetadata?.assetPhotos)
+          ? body.assetMetadata.assetPhotos.map((s: any) => String(s || "").trim()).filter(Boolean)
+          : [],
       };
       const issuerAddress = (body.issuerAddress || "").trim();
       const issuerSignature = (body.issuerSignature || "").trim();
@@ -298,10 +388,19 @@ app.post("/v1/issuances", { preHandler: x402Gate }, async (req, reply) => {
       }
 
       // 1. AI compliance gate — reviews the issuer documentation AND the
-      // structured declaration, checking the two are consistent.
+      // structured declaration, checking the two are consistent. If the
+      // issuer uploaded a PDF (docs or proof), its extracted text is fed to
+      // the gate too, so the AI reads the ACTUAL document, not just the
+      // typed summary. The signed payload is unchanged — the file text is
+      // review-only material.
+      const uploadText =
+        (await extractUploadText(docsUri)) || (await extractUploadText(assetMetadata.backingProofUri));
+      const reviewedDocs = uploadText
+        ? `${docsText}\n\n[Extracted from uploaded document: ${docsUri || assetMetadata.backingProofUri}]\n${uploadText}`
+        : docsText;
       let dossier: ComplianceDossier;
       try {
-        dossier = await runComplianceGate({ name, symbol, docsText, docsUri, assetMetadata });
+        dossier = await runComplianceGate({ name, symbol, docsText: reviewedDocs, docsUri, assetMetadata });
       } catch (e: any) {
         app.log.error({ err: e }, "compliance gate failed");
         throw new HttpError(503, { error: "gate_unavailable", message: `AI gate failed: ${e?.message || e}` });

@@ -7,6 +7,7 @@ const nextConfig = {
     return [
       { source: "/health", destination: `${process.env.API_ORIGIN || "http://localhost:4000"}/health` },
       { source: "/v1/:path*", destination: `${process.env.API_ORIGIN || "http://localhost:4000"}/v1/:path*` },
+      { source: "/uploads/:path*", destination: `${process.env.API_ORIGIN || "http://localhost:4000"}/uploads/:path*` },
     ];
   },
   webpack: (config) => {

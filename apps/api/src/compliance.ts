@@ -77,6 +77,7 @@ export interface AssetMetadata {
   legalEntity: string; // registered entity name
   backingProofType: string; // title-deed, escrow, invoice, custody, none
   backingProofUri?: string; // link to the proof document
+  assetPhotos?: string[]; // uploaded asset photo URLs
 }
 
 // Static instructions + schema go in the Anthropic top-level "system" field.
@@ -109,6 +110,9 @@ function buildUserPrompt(doc: {
 - Legal entity: ${doc.assetMetadata?.legalEntity || "NOT PROVIDED"}
 - Backing proof type: ${doc.assetMetadata?.backingProofType || "NOT PROVIDED"}
 - Proof URI: ${doc.assetMetadata?.backingProofUri || "none"}
+${Array.isArray(doc.assetMetadata?.assetPhotos) && doc.assetMetadata.assetPhotos.length
+  ? `- Asset photos: ${doc.assetMetadata.assetPhotos.join(", ")}`
+  : ""}
 
 Issuance name: ${doc.name} (${doc.symbol})
 Documentation URI: ${doc.docsUri || "none"}
