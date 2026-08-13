@@ -23,6 +23,7 @@ interface Issuance {
   pricePerTokenUsdt: string;
   totalSupply: string;
   docsUri: string;
+  payloadHash: string;
   accDividendPerToken: string;
   listedAt: number;
   blockNumber: number;
@@ -132,6 +133,14 @@ export default function Marketplace() {
   const [fPrice, setFPrice] = useState("");
   const [fDocs, setFDocs] = useState("");
   const [fDocsUri, setFDocsUri] = useState("");
+  const [fAssetClass, setFAssetClass] = useState("");
+  const [fJurisdiction, setFJurisdiction] = useState("");
+  const [fLegalEntity, setFLegalEntity] = useState("");
+  const [fProofType, setFProofType] = useState("");
+  const [fProofUri, setFProofUri] = useState("");
+  const [declSignature, setDeclSignature] = useState("");
+  const [declAddress, setDeclAddress] = useState("");
+  const [signing, setSigning] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [launchResult, setLaunchResult] = useState<any>(null);
 
@@ -182,9 +191,61 @@ export default function Marketplace() {
     loadClaimables();
   }, [loadClaimables]);
 
+  // Builds the canonical declaration payload — SAME key order as the API:
+  // name, symbol, docsText, docsUri, assetMetadata.
+  const buildPayloadJson = useCallback((): string => {
+    const assetMetadata = {
+      assetClass: fAssetClass.trim(),
+      jurisdiction: fJurisdiction.trim(),
+      legalEntity: fLegalEntity.trim(),
+      backingProofType: fProofType.trim(),
+      backingProofUri: fProofUri.trim(),
+    };
+    return JSON.stringify({
+      name: fName.trim(),
+      symbol: fSymbol.trim().toUpperCase(),
+      docsText: fDocs.trim(),
+      docsUri: fDocsUri.trim(),
+      assetMetadata,
+    });
+  }, [fName, fSymbol, fDocs, fDocsUri, fAssetClass, fJurisdiction, fLegalEntity, fProofType, fProofUri]);
+
+  // The issuer signs the exact declaration that gets committed on-chain.
+  // A tampered field changes the hash, breaks the signature, and the API rejects it.
+  const signDeclaration = useCallback(async () => {
+    if (!fName || !fSymbol || !fDocs || !fAssetClass || !fJurisdiction || !fLegalEntity || !fProofType) {
+      setError("Fill all required fields before signing the declaration.");
+      return;
+    }
+    const eth = getEth();
+    if (!eth) {
+      setError("Connect your wallet first — the issuer must sign the declaration.");
+      return;
+    }
+    setSigning(true);
+    setError("");
+    try {
+      const provider = new BrowserProvider(eth);
+      const signer = await provider.getSigner();
+      const addr = (await signer.getAddress()).toLowerCase();
+      const sig = await signer.signMessage(buildPayloadJson());
+      setDeclSignature(sig);
+      setDeclAddress(addr);
+      setNotice("Declaration signed. The exact reviewed content is now bound to your wallet.");
+    } catch (e: any) {
+      setError(e?.shortMessage || e?.message || "Signing failed or was rejected in the wallet");
+    } finally {
+      setSigning(false);
+    }
+  }, [fName, fSymbol, fDocs, fAssetClass, fJurisdiction, fLegalEntity, fProofType, buildPayloadJson]);
+
   const launchIssuance = useCallback(async () => {
-    if (!fName || !fSymbol || !fPrice || !fDocs) {
-      setError("All fields are required. The AI gate reviews your documentation.");
+    if (!fName || !fSymbol || !fPrice || !fDocs || !fAssetClass || !fJurisdiction || !fLegalEntity || !fProofType) {
+      setError("All fields are required. The AI gate reviews your documentation and declaration.");
+      return;
+    }
+    if (!declSignature || !declAddress) {
+      setError("Sign the asset declaration first — your signature binds the reviewed content.");
       return;
     }
     setLaunching(true);
@@ -192,13 +253,23 @@ export default function Marketplace() {
     setNotice("");
     setLaunchResult(null);
     try {
+      const assetMetadata = {
+        assetClass: fAssetClass.trim(),
+        jurisdiction: fJurisdiction.trim(),
+        legalEntity: fLegalEntity.trim(),
+        backingProofType: fProofType.trim(),
+        backingProofUri: fProofUri.trim(),
+      };
       // x402 checkout: probe → 402 → wallet signs + transfers USDT → replay.
       const res = await paidPost("/v1/issuances", {
-        name: fName,
-        symbol: fSymbol,
+        name: fName.trim(),
+        symbol: fSymbol.trim().toUpperCase(),
         pricePerTokenUsdt: parseFloat(fPrice),
-        docsText: fDocs,
-        docsUri: fDocsUri,
+        docsText: fDocs.trim(),
+        docsUri: fDocsUri.trim(),
+        assetMetadata,
+        issuerAddress: declAddress,
+        issuerSignature: declSignature,
       });
       if (res.status === 402) {
         const body = await res.json();
@@ -209,6 +280,8 @@ export default function Marketplace() {
       setLaunchResult(body);
       if (body?.listed) {
         setFName(""); setFSymbol(""); setFPrice(""); setFDocs(""); setFDocsUri("");
+        setFAssetClass(""); setFJurisdiction(""); setFLegalEntity(""); setFProofType(""); setFProofUri("");
+        setDeclSignature(""); setDeclAddress("");
         loadIssuances();
       }
     } catch (e: any) {
@@ -216,7 +289,7 @@ export default function Marketplace() {
     } finally {
       setLaunching(false);
     }
-  }, [fName, fSymbol, fPrice, fDocs, fDocsUri, loadIssuances]);
+  }, [fName, fSymbol, fPrice, fDocs, fDocsUri, fAssetClass, fJurisdiction, fLegalEntity, fProofType, fProofUri, declSignature, declAddress, loadIssuances]);
 
   const buyUnits = useCallback(
     async (iss: Issuance, usdtAmount: string) => {
@@ -370,6 +443,15 @@ export default function Marketplace() {
               <input value={fSymbol} onChange={(e) => setFSymbol(e.target.value)} placeholder="SYMBOL" style={{ ...inputStyle, maxWidth: 130, flexBasis: 110 }} />
               <input value={fPrice} onChange={(e) => setFPrice(e.target.value)} placeholder="Price per unit (USDT)" type="number" step="0.01" style={{ ...inputStyle, maxWidth: 170, flexBasis: 150 }} />
             </div>
+            <div className="vf-row" style={{ marginBottom: 10 }}>
+              <input value={fAssetClass} onChange={(e) => setFAssetClass(e.target.value)} placeholder="Asset class (real-estate, invoice, bond…)" style={inputStyle} />
+              <input value={fJurisdiction} onChange={(e) => setFJurisdiction(e.target.value)} placeholder="Jurisdiction (e.g. NG-Lagos)" style={inputStyle} />
+            </div>
+            <div className="vf-row" style={{ marginBottom: 10 }}>
+              <input value={fLegalEntity} onChange={(e) => setFLegalEntity(e.target.value)} placeholder="Legal entity (registered company name)" style={inputStyle} />
+              <input value={fProofType} onChange={(e) => setFProofType(e.target.value)} placeholder="Backing proof (title-deed, escrow, invoice…)" style={inputStyle} />
+            </div>
+            <input value={fProofUri} onChange={(e) => setFProofUri(e.target.value)} placeholder="Proof URI (optional, link to the backing document)" style={{ ...inputStyle, marginBottom: 10, width: "100%" }} />
             <input value={fDocsUri} onChange={(e) => setFDocsUri(e.target.value)} placeholder="Docs URI (optional, e.g. ipfs://…)" style={{ ...inputStyle, marginBottom: 10, width: "100%" }} />
             <textarea
               value={fDocs}
@@ -378,6 +460,19 @@ export default function Marketplace() {
               rows={7}
               style={{ ...inputStyle, width: "100%", resize: "vertical", fontFamily: "inherit", marginBottom: 14 }}
             />
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
+              <button onClick={signDeclaration} disabled={signing} style={btnStyle({ outline: true, disabled: signing })}>
+                {signing ? "Awaiting wallet signature…" : "Sign asset declaration"}
+              </button>
+              {declAddress && (
+                <span style={{ color: "#10b981", fontSize: "0.82rem" }}>
+                  ✓ Signed by {declAddress.slice(0, 6)}…{declAddress.slice(-4)}
+                </span>
+              )}
+              <span style={{ color: "#9ca3af", fontSize: "0.78rem" }}>
+                Your signature binds the exact reviewed content. Any edit invalidates it.
+              </span>
+            </div>
             <button onClick={launchIssuance} disabled={launching} style={btnStyle({ disabled: launching })}>
               {launching ? "Running AI compliance gate…" : "Launch issuance (1 USDT via x402)"}
             </button>
@@ -485,6 +580,14 @@ function IssuanceCard({
           view on BOTScan ↗
         </a>
       </div>
+      <div className="vf-row" style={{ gap: 8, fontSize: "0.75rem", color: "#9ca3af", marginBottom: 10, alignItems: "center" }}>
+        <span style={{ color: "#10b981", background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.3)", borderRadius: 999, padding: "2px 10px" }}>
+          ✓ AI-approved
+        </span>
+        <span style={{ fontFamily: "monospace" }}>
+          {iss.payloadHash ? `docs committed ${iss.payloadHash.slice(0, 10)}…${iss.payloadHash.slice(-6)}` : "docs commitment on-chain"}
+        </span>
+      </div>
       <div className="vf-row">
         <input value={amount} onChange={(e) => setAmount(e.target.value)} type="number" step="0.01" min="0" style={{ ...inputStyle, maxWidth: 130, flexBasis: 110 }} />
         <span style={{ fontSize: "0.8rem", color: "#9ca3af" }}>USDT</span>
@@ -532,6 +635,11 @@ function DossierCard({ result }: { result: any }) {
           <a href={result.onChain.explorer} target="_blank" rel="noopener noreferrer" style={{ color: "#10b981", textDecoration: "underline" }}>
             view tx
           </a>
+          {result.payloadHash && (
+            <span style={{ display: "block", marginTop: 4, fontFamily: "monospace", color: "#6ee7b7" }}>
+              payload committed: {result.payloadHash.slice(0, 14)}…{result.payloadHash.slice(-8)}
+            </span>
+          )}
         </p>
       )}
       {d.findings?.length > 0 && (

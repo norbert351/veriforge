@@ -7,7 +7,7 @@ import {AttestationRegistry} from "./AttestationRegistry.sol";
 /// @notice On-chain catalog of tokenized RWA issuances on BOT Chain.
 ///         The AI compliance gate is enforced HERE: an issuance can only be
 ///         listed if its RwaToken carries an APPROVED attestation from the
-///         verifier (the VeriForge AI backend). Refuses unapproved issuances.
+///         verifier set (the VeriForge AI backend). Refuses unapproved issuances.
 ///         Holds no funds. Only the verifier can list.
 contract IssuanceRegistry {
     /// @notice A listed issuance.
@@ -18,6 +18,7 @@ contract IssuanceRegistry {
         address distributor; // RevenueDistributor (revenue share pool)
         uint256 pricePerToken; // USDT 6dp per 1e18 unit
         string docsUri; // issuer documentation reviewed by the AI gate
+        bytes32 payloadHash; // commitment to the exact reviewed payload (docs + metadata + proof)
         uint64 listedAt;
         uint64 blockNumber;
     }
@@ -34,7 +35,8 @@ contract IssuanceRegistry {
         address indexed token,
         address distributor,
         uint256 pricePerToken,
-        string docsUri
+        string docsUri,
+        bytes32 payloadHash
     );
     event VerifierChanged(address indexed oldVerifier, address indexed newVerifier);
 
@@ -43,6 +45,7 @@ contract IssuanceRegistry {
     error AlreadyListed();
     error ZeroAddress();
     error InvalidPrice();
+    error InvalidPayload();
 
     modifier onlyVerifier() {
         if (msg.sender != verifier) revert OnlyVerifier();
@@ -62,22 +65,27 @@ contract IssuanceRegistry {
     /// @param distributor RevenueDistributor address.
     /// @param pricePerToken USDT 6dp per 1e18 unit.
     /// @param docsUri Documentation reviewed by the AI compliance gate.
+    /// @param payloadHash Commitment to the exact reviewed payload. Must match
+    ///        the hash the verifier attested, or the listing is refused.
     function issue(
         address issuer_,
         address token,
         address distributor,
         uint256 pricePerToken,
-        string calldata docsUri
+        string calldata docsUri,
+        bytes32 payloadHash
     ) external onlyVerifier returns (uint64 id) {
         if (issuer_ == address(0) || token == address(0) || distributor == address(0)) revert ZeroAddress();
         if (pricePerToken == 0) revert InvalidPrice();
         if (_tokenToId[token] != 0) revert AlreadyListed();
 
         // ── THE AI GATE, enforced on-chain ──────────────────────────────
-        // AttestationRegistry only lets the verifier write, and only stores
-        // verdicts the AI backend produced. No APPROVED attestation => no listing.
+        // AttestationRegistry only lets verifier-set members write, and only
+        // stores verdicts the AI backend produced. No APPROVED attestation
+        // with a matching payload commitment => no listing.
         AttestationRegistry.Attestation memory a = attestations.getAttestation(token);
         if (a.verdict != AttestationRegistry.Verdict.APPROVED) revert NotApproved();
+        if (a.payloadHash != payloadHash) revert InvalidPayload();
 
         id = uint64(_issuances.length) + 1;
         _issuances.push(Issuance({
@@ -87,12 +95,13 @@ contract IssuanceRegistry {
             distributor: distributor,
             pricePerToken: pricePerToken,
             docsUri: docsUri,
+            payloadHash: payloadHash,
             listedAt: uint64(block.timestamp),
             blockNumber: uint64(block.number)
         }));
         _tokenToId[token] = id;
 
-        emit Issued(id, issuer_, token, distributor, pricePerToken, docsUri);
+        emit Issued(id, issuer_, token, distributor, pricePerToken, docsUri, payloadHash);
     }
 
     function setVerifier(address newVerifier) external onlyVerifier {

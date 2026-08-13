@@ -31,6 +31,7 @@ export declare namespace IssuanceRegistry {
     distributor: AddressLike;
     pricePerToken: BigNumberish;
     docsUri: string;
+    payloadHash: BytesLike;
     listedAt: BigNumberish;
     blockNumber: BigNumberish;
   };
@@ -42,6 +43,7 @@ export declare namespace IssuanceRegistry {
     distributor: string,
     pricePerToken: bigint,
     docsUri: string,
+    payloadHash: string,
     listedAt: bigint,
     blockNumber: bigint
   ] & {
@@ -51,6 +53,7 @@ export declare namespace IssuanceRegistry {
     distributor: string;
     pricePerToken: bigint;
     docsUri: string;
+    payloadHash: string;
     listedAt: bigint;
     blockNumber: bigint;
   };
@@ -87,7 +90,14 @@ export interface IssuanceRegistryInterface extends Interface {
   ): string;
   encodeFunctionData(
     functionFragment: "issue",
-    values: [AddressLike, AddressLike, AddressLike, BigNumberish, string]
+    values: [
+      AddressLike,
+      AddressLike,
+      AddressLike,
+      BigNumberish,
+      string,
+      BytesLike
+    ]
   ): string;
   encodeFunctionData(
     functionFragment: "setVerifier",
@@ -124,7 +134,8 @@ export namespace IssuedEvent {
     token: AddressLike,
     distributor: AddressLike,
     pricePerToken: BigNumberish,
-    docsUri: string
+    docsUri: string,
+    payloadHash: BytesLike
   ];
   export type OutputTuple = [
     id: bigint,
@@ -132,7 +143,8 @@ export namespace IssuedEvent {
     token: string,
     distributor: string,
     pricePerToken: bigint,
-    docsUri: string
+    docsUri: string,
+    payloadHash: string
   ];
   export interface OutputObject {
     id: bigint;
@@ -141,6 +153,7 @@ export namespace IssuedEvent {
     distributor: string;
     pricePerToken: bigint;
     docsUri: string;
+    payloadHash: string;
   }
   export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
   export type Filter = TypedDeferredTopicFilter<Event>;
@@ -232,7 +245,8 @@ export interface IssuanceRegistry extends BaseContract {
       token: AddressLike,
       distributor: AddressLike,
       pricePerToken: BigNumberish,
-      docsUri: string
+      docsUri: string,
+      payloadHash: BytesLike
     ],
     [bigint],
     "nonpayable"
@@ -281,7 +295,8 @@ export interface IssuanceRegistry extends BaseContract {
       token: AddressLike,
       distributor: AddressLike,
       pricePerToken: BigNumberish,
-      docsUri: string
+      docsUri: string,
+      payloadHash: BytesLike
     ],
     [bigint],
     "nonpayable"
@@ -309,7 +324,7 @@ export interface IssuanceRegistry extends BaseContract {
   >;
 
   filters: {
-    "Issued(uint64,address,address,address,uint256,string)": TypedContractEvent<
+    "Issued(uint64,address,address,address,uint256,string,bytes32)": TypedContractEvent<
       IssuedEvent.InputTuple,
       IssuedEvent.OutputTuple,
       IssuedEvent.OutputObject

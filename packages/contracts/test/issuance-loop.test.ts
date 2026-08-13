@@ -13,6 +13,8 @@ describe("Issuance loop (AI gate → list → buy → revenue)", () => {
 
   const PRICE = 1_000_000n; // 1 USDT per unit (6 dp)
   const ONE = 10n ** 18n;
+  const PAYLOAD = ethers.keccak256(ethers.toUtf8Bytes("docs+metadata+proof")); // commitment to reviewed payload
+  const PAYLOAD2 = ethers.keccak256(ethers.toUtf8Bytes("tampered docs")); // any edit changes the hash
 
   async function deployToken(name = "Warehouse Token", symbol = "WHSE") {
     const f = await ethers.getContractFactory("RwaToken");
@@ -23,8 +25,8 @@ describe("Issuance loop (AI gate → list → buy → revenue)", () => {
     await usdt.connect(holder).approve(spender, amount);
   }
 
-  async function attestApproved(target: string, score = 90) {
-    await registry.connect(verifier).attest(target, score, 2, 0x1234, "ipfs://dossier-1");
+  async function attestApproved(target: string, score = 90, payload = PAYLOAD) {
+    await registry.connect(verifier).attest(target, score, 2, 0x1234, "ipfs://dossier-1", payload);
   }
 
   beforeEach(async () => {
@@ -48,49 +50,58 @@ describe("Issuance loop (AI gate → list → buy → revenue)", () => {
   describe("IssuanceRegistry — the AI gate enforced on-chain", () => {
     it("refuses to list an issuance with no attestation", async () => {
       await expect(
-        issuanceRegistry.connect(verifier).issue(issuer.address, token.target, distributor.target, PRICE, "ipfs://docs")
+        issuanceRegistry.connect(verifier).issue(issuer.address, token.target, distributor.target, PRICE, "ipfs://docs", PAYLOAD)
       ).to.be.revertedWithCustomError(issuanceRegistry, "NotApproved");
     });
 
     it("refuses to list when the attestation is BLOCKED", async () => {
-      await registry.connect(verifier).attest(token.target, 20, 0, 0x1, "ipfs://dossier");
+      await registry.connect(verifier).attest(token.target, 20, 0, 0x1, "ipfs://dossier", PAYLOAD);
       await expect(
-        issuanceRegistry.connect(verifier).issue(issuer.address, token.target, distributor.target, PRICE, "ipfs://docs")
+        issuanceRegistry.connect(verifier).issue(issuer.address, token.target, distributor.target, PRICE, "ipfs://docs", PAYLOAD)
       ).to.be.revertedWithCustomError(issuanceRegistry, "NotApproved");
     });
 
     it("refuses to list when the attestation is CAUTION", async () => {
-      await registry.connect(verifier).attest(token.target, 55, 1, 0x1, "ipfs://dossier");
+      await registry.connect(verifier).attest(token.target, 55, 1, 0x1, "ipfs://dossier", PAYLOAD);
       await expect(
-        issuanceRegistry.connect(verifier).issue(issuer.address, token.target, distributor.target, PRICE, "ipfs://docs")
+        issuanceRegistry.connect(verifier).issue(issuer.address, token.target, distributor.target, PRICE, "ipfs://docs", PAYLOAD)
       ).to.be.revertedWithCustomError(issuanceRegistry, "NotApproved");
     });
 
-    it("lists an issuance only after an APPROVED attestation", async () => {
+    it("refuses to list when the payload hash does not match the attestation", async () => {
+      await attestApproved(token.target, 90, PAYLOAD);
+      // listing with a DIFFERENT payload commitment must fail — tampered docs can't slip through
+      await expect(
+        issuanceRegistry.connect(verifier).issue(issuer.address, token.target, distributor.target, PRICE, "ipfs://docs", PAYLOAD2)
+      ).to.be.revertedWithCustomError(issuanceRegistry, "InvalidPayload");
+    });
+
+    it("lists an issuance only after an APPROVED attestation with matching payload", async () => {
       await attestApproved(token.target);
       const id = await issuanceRegistry.connect(verifier).issue.staticCall(
-        issuer.address, token.target, distributor.target, PRICE, "ipfs://docs"
+        issuer.address, token.target, distributor.target, PRICE, "ipfs://docs", PAYLOAD
       );
       expect(id).to.equal(1n);
-      await issuanceRegistry.connect(verifier).issue(issuer.address, token.target, distributor.target, PRICE, "ipfs://docs");
+      await issuanceRegistry.connect(verifier).issue(issuer.address, token.target, distributor.target, PRICE, "ipfs://docs", PAYLOAD);
       const i = await issuanceRegistry.getIssuance(1);
       expect(i.token).to.equal(token.target);
       expect(i.issuer).to.equal(issuer.address);
       expect(i.distributor).to.equal(distributor.target);
       expect(i.pricePerToken).to.equal(PRICE);
+      expect(i.payloadHash).to.equal(PAYLOAD);
     });
 
     it("rejects non-verifier callers", async () => {
       await expect(
-        issuanceRegistry.connect(issuer).issue(issuer.address, token.target, distributor.target, PRICE, "ipfs://docs")
+        issuanceRegistry.connect(issuer).issue(issuer.address, token.target, distributor.target, PRICE, "ipfs://docs", PAYLOAD)
       ).to.be.revertedWithCustomError(issuanceRegistry, "OnlyVerifier");
     });
 
     it("rejects double listing of the same token", async () => {
       await attestApproved(token.target);
-      await issuanceRegistry.connect(verifier).issue(issuer.address, token.target, distributor.target, PRICE, "ipfs://docs");
+      await issuanceRegistry.connect(verifier).issue(issuer.address, token.target, distributor.target, PRICE, "ipfs://docs", PAYLOAD);
       await expect(
-        issuanceRegistry.connect(verifier).issue(issuer.address, token.target, distributor.target, PRICE, "ipfs://docs")
+        issuanceRegistry.connect(verifier).issue(issuer.address, token.target, distributor.target, PRICE, "ipfs://docs", PAYLOAD)
       ).to.be.revertedWithCustomError(issuanceRegistry, "AlreadyListed");
     });
   });
@@ -182,13 +193,14 @@ describe("Issuance loop (AI gate → list → buy → revenue)", () => {
       await usdt.mint(investor.address, 1000n * 1_000_000n);
       await usdt.mint(issuer.address, 1000n * 1_000_000n);
 
-      // 1. AI gate approves the token
+      // 1. AI gate approves the token, binding the verdict to the reviewed payload
       await attestApproved(token.target, 88);
 
-      // 2. Issuance listed
-      await issuanceRegistry.connect(verifier).issue(issuer.address, token.target, distributor.target, PRICE, "ipfs://docs");
+      // 2. Issuance listed with the same payload commitment
+      await issuanceRegistry.connect(verifier).issue(issuer.address, token.target, distributor.target, PRICE, "ipfs://docs", PAYLOAD);
       const listed = await issuanceRegistry.getIssuance(1);
       expect(listed.token).to.equal(token.target);
+      expect(listed.payloadHash).to.equal(PAYLOAD);
 
       // 3. Investor buys 50 units for 50 USDT
       await approveUsdt(investor, token.target, 50n * 1_000_000n);

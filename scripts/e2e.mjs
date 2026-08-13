@@ -33,12 +33,22 @@ async function main() {
   // fund investor with USDT
   const usdt = new ethers.Contract(USDT, ["function mint(address,uint256)", "function approve(address,uint256)", "function balanceOf(address) view returns (uint256)", "function transfer(address,uint256)"], issuer);
   if (PUBLIC_CHAIN) {
-    // Bohr/mainnet USDT has no mint: fund the investor from the issuer's balance
-    const gasTop = await issuer.sendTransaction({ to: investor.address, value: ethers.parseUnits("1", 18) });
-    await gasTop.wait();
-    const fund = await usdt.transfer(investor.address, ethers.parseUnits("500", 6));
-    await fund.wait();
-    console.log("1. funded investor 500 USDT + 1 BOT from issuer (public chain)");
+    // Bohr/mainnet USDT has no mint: reuse the investor's existing balance,
+    // top up only the shortfall from the issuer, and fund gas only if low.
+    const NEED = ethers.parseUnits("500", 6);
+    const invBal = await usdt.balanceOf(investor.address);
+    if (invBal < NEED) {
+      const fund = await usdt.transfer(investor.address, NEED - invBal);
+      await fund.wait();
+      console.log("1. topped investor up to 500 USDT from issuer (public chain)");
+    } else {
+      console.log("1. investor already has", ethers.formatUnits(invBal, 6), "USDT — skipped issuer funding");
+    }
+    if ((await provider.getBalance(investor.address)) < ethers.parseUnits("0.2", 18)) {
+      const gasTop = await issuer.sendTransaction({ to: investor.address, value: ethers.parseUnits("1", 18) });
+      await gasTop.wait();
+      console.log("   gas top-up sent to investor");
+    }
   } else {
     const mintTx = await usdt.mint(investor.address, ethers.parseUnits("500", 6));
     await mintTx.wait();
@@ -51,10 +61,39 @@ Backing: A 12,000 sqm logistics warehouse in Ikeja, Lagos valued at 4.2M USDT by
 Revenue model: Triple-net lease to a national logistics operator, 9.4% gross yield per annum, paid monthly in USDT.
 Legal: Issued by Lagos Warehouse Holdings Ltd, a Nigerian company registered in Lagos, regulated under SEC Nigeria digital asset guidelines. Custody with Meridian Trustees.
 Terms: 100,000 units at 10 USDT each. Quarterly buyback option at par plus accrued yield. No leverage, no off-chain rehypothecation.`;
-  const body = { name: "Lagos Warehouse REIT", symbol: "LAWR", pricePerTokenUsdt: 10, docsText: docs, docsUri: "ipfs://QmTestLAWR" };
+  // asset declaration: issuer signs the EXACT canonical payload the API will
+  // commit on-chain. Key order fixed (name, symbol, docsText, docsUri, assetMetadata).
+  const assetMetadata = {
+    assetClass: "real-estate",
+    jurisdiction: "NG-Lagos",
+    legalEntity: "Lagos Warehouse Holdings Ltd",
+    backingProofType: "title-deed + independent valuation",
+    backingProofUri: "ipfs://QmValuationLAWR2026",
+  };
+  const payloadJson = JSON.stringify({
+    name: "Lagos Warehouse REIT",
+    symbol: "LAWR",
+    docsText: docs,
+    docsUri: "ipfs://QmTestLAWR",
+    assetMetadata,
+  });
+  const payloadHash = ethers.keccak256(ethers.toUtf8Bytes(payloadJson));
+  const issuerSignature = await issuer.signMessage(payloadJson);
+  console.log("2. issuer signed asset declaration, payloadHash:", payloadHash.slice(0, 18) + "...");
+
+  const body = {
+    name: "Lagos Warehouse REIT",
+    symbol: "LAWR",
+    pricePerTokenUsdt: 10,
+    docsText: docs,
+    docsUri: "ipfs://QmTestLAWR",
+    assetMetadata,
+    issuerAddress: issuer.address,
+    issuerSignature,
+  };
 
   const probe = await fetch(`${API}/v1/issuances`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  console.log("2. probe status:", probe.status);
+  console.log("3. probe status:", probe.status);
   const challengeB64 = probe.headers.get("payment-required") || "";
   const challenge = JSON.parse(Buffer.from(challengeB64, "base64").toString());
   const accepted = challenge.accepts[0];
@@ -65,7 +104,7 @@ Terms: 100,000 units at 10 USDT each. Quarterly buyback option at par plus accru
   const usdtInv = new ethers.Contract(USDT, ["function transfer(address,uint256)"], investor);
   const payTx = await usdtInv.transfer(PAY_TO, amount);
   await payTx.wait();
-  console.log("3. investor paid", ethers.formatUnits(amount, 6), "USDT tx:", payTx.hash);
+  console.log("4. investor paid", ethers.formatUnits(amount, 6), "USDT tx:", payTx.hash);
 
   // sign EIP-712
   const msg = {
@@ -76,7 +115,7 @@ Terms: 100,000 units at 10 USDT each. Quarterly buyback option at par plus accru
   };
   const signature = await investor.signTypedData(DOMAIN, EIP712_TYPES, msg);
   const header = Buffer.from(JSON.stringify({ accepted, signature, payer: investor.address })).toString("base64");
-  console.log("4. signed EIP-712, replaying with PAYMENT-SIGNATURE");
+  console.log("5. signed EIP-712, replaying with PAYMENT-SIGNATURE");
 
   const res = await fetch(`${API}/v1/issuances`, {
     method: "POST",
@@ -84,13 +123,30 @@ Terms: 100,000 units at 10 USDT each. Quarterly buyback option at par plus accru
     body: JSON.stringify(body),
   });
   const data = await res.json();
-  console.log("5. issuance status:", res.status, "listed:", data.listed, "id:", data.issuance_id);
+  console.log("6. issuance status:", res.status, "listed:", data.listed, "id:", data.issuance_id);
   if (data.onChain) console.log("   token:", data.onChain.token, "\n   explorer:", data.onChain.explorer);
   console.log("   dossier:", data.dossier?.verdict, "score", data.dossier?.score);
 
-  if (!data.listed) { console.log("STOP: not listed"); return; }
+  if (!data.listed) { console.log("STOP: not listed", JSON.stringify(data)); return; }
   const tokenAddr = data.onChain.token;
   const distributorAddr = data.onChain.distributor;
+
+  // verify the commitment: API hash === our hash === on-chain attestation hash
+  if (data.payloadHash !== payloadHash) {
+    console.log("STOP: payloadHash mismatch — API", data.payloadHash, "local", payloadHash);
+    return;
+  }
+  console.log("7. payloadHash verified: API hash matches the locally signed declaration");
+  const attAddr = process.env.ATTESTATION_REGISTRY || "";
+  if (attAddr) {
+    const ar = new ethers.Contract(attAddr, ["function getAttestation(address) view returns ((address target,uint96 score,uint8 verdict,uint64 findingsHash,string reportUri,bytes32 payloadHash,uint64 attestedAt,uint64 blockNumber))"], provider);
+    const a = await ar.getAttestation(tokenAddr);
+    if (a.payloadHash !== payloadHash) {
+      console.log("STOP: on-chain attestation payloadHash mismatch:", a.payloadHash);
+      return;
+    }
+    console.log("   on-chain attestation payloadHash matches (", a.payloadHash.slice(0, 18) + "... )");
+  }
 
   // buy units: approve + buy 50 USDT worth
   const rwaAbi = ["function buy(uint256) returns (uint256)", "function balanceOf(address) view returns (uint256)"];
@@ -107,7 +163,7 @@ Terms: 100,000 units at 10 USDT each. Quarterly buyback option at par plus accru
   const buy = await token.buy(ethers.parseUnits("50", 6), { nonce: invNonce++ });
   const buyR = await buy.wait();
   const bal = await token.balanceOf(investor.address);
-  console.log("6. investor bought 50 USDT worth ->", ethers.formatUnits(bal, 18), "units tx:", buyR.hash);
+  console.log("8. investor bought 50 USDT worth ->", ethers.formatUnits(bal, 18), "units tx:", buyR.hash);
 
   // issuer deposits revenue 25 USDT
   // The API pipeline uses the same issuer key (deploy/attest/list), so the
@@ -133,19 +189,19 @@ Terms: 100,000 units at 10 USDT each. Quarterly buyback option at par plus accru
   const dist = new ethers.Contract(distributorAddr, distAbi, issuer);
   const dep = await sendWithRetry((o) => dist.deposit(ethers.parseUnits("25", 6), o));
   await dep.wait();
-  console.log("7. issuer deposited 25 USDT revenue");
+  console.log("9. issuer deposited 25 USDT revenue");
 
   // check claimable via API
   const claimable = await fetch(`${API}/v1/issuances/${data.issuance_id}/claimable/${investor.address}`);
   const claimData = await claimable.json();
-  console.log("8. API claimable:", claimData.claimable_usdt, "USDT");
+  console.log("10. API claimable:", claimData.claimable_usdt, "USDT");
 
   // investor claims
   const distInv = new ethers.Contract(distributorAddr, distAbi, investor);
   const claim = await distInv.claim({ nonce: await freshNonce(investor) });
   const claimR = await claim.wait();
   const balUsdt = await usdt.balanceOf(investor.address);
-  console.log("9. investor claimed tx:", claimR.hash, "USDT bal now:", ethers.formatUnits(balUsdt, 6));
+  console.log("11. investor claimed tx:", claimR.hash, "USDT bal now:", ethers.formatUnits(balUsdt, 6));
 
   console.log("\nFULL LOOP OK");
 }

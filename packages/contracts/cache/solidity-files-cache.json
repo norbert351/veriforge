@@ -2,8 +2,8 @@
   "_format": "hh-sol-cache-2",
   "files": {
     "/home/ubuntu/veriforge/packages/contracts/contracts/AttestationRegistry.sol": {
-      "lastModificationDate": 1786037984623,
-      "contentHash": "971b59906a3e3fd62674c7c038e3b281",
+      "lastModificationDate": 1786579847424,
+      "contentHash": "0c8634057d3cc4127a767ad2c6ab0eb8",
       "sourceName": "contracts/AttestationRegistry.sol",
       "solcConfig": {
         "version": "0.8.28",
@@ -39,8 +39,8 @@
       ]
     },
     "/home/ubuntu/veriforge/packages/contracts/contracts/IssuanceRegistry.sol": {
-      "lastModificationDate": 1786142891741,
-      "contentHash": "7fdbf1d97ca141c359293b8431afb3af",
+      "lastModificationDate": 1786579226506,
+      "contentHash": "5370be64749f55988ba4bbf538eebe4b",
       "sourceName": "contracts/IssuanceRegistry.sol",
       "solcConfig": {
         "version": "0.8.28",

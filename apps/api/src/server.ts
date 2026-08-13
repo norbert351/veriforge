@@ -51,15 +51,17 @@ function loadContractAddresses(): { attestationRegistry: string; issuanceRegistr
 }
 
 const ATTESTATION_ABI = [
-  "function attest(address target, uint96 score, uint8 verdict, uint64 findingsHash, string calldata reportUri) returns (uint64)",
-  "function getAttestation(address) view returns (address target, uint96 score, uint8 verdict, uint64 findingsHash, string reportUri, uint64 attestedAt, uint64 blockNumber)",
+  "function attest(address target, uint96 score, uint8 verdict, uint64 findingsHash, string calldata reportUri, bytes32 payloadHash) returns (uint64)",
+  "function getAttestation(address) view returns ((address target, uint96 score, uint8 verdict, uint64 findingsHash, string reportUri, bytes32 payloadHash, uint64 attestedAt, uint64 blockNumber))",
+  "function isVerifier(address) view returns (bool)",
+  "function verifierCount() view returns (uint256)",
 ];
 
 const ISSUANCE_ABI = [
-  "function issue(address issuer, address token, address distributor, uint256 pricePerToken, string calldata docsUri) returns (uint64)",
+  "function issue(address issuer, address token, address distributor, uint256 pricePerToken, string calldata docsUri, bytes32 payloadHash) returns (uint64)",
   "function count() view returns (uint64)",
-  "function getIssuance(uint64) view returns (tuple(uint64 id, address issuer, address token, address distributor, uint256 pricePerToken, string docsUri, uint64 listedAt, uint64 blockNumber))",
-  "function getIssuanceByToken(address) view returns (tuple(uint64 id, address issuer, address token, address distributor, uint256 pricePerToken, string docsUri, uint64 listedAt, uint64 blockNumber))",
+  "function getIssuance(uint64) view returns (tuple(uint64 id, address issuer, address token, address distributor, uint256 pricePerToken, string docsUri, bytes32 payloadHash, uint64 listedAt, uint64 blockNumber))",
+  "function getIssuanceByToken(address) view returns (tuple(uint64 id, address issuer, address token, address distributor, uint256 pricePerToken, string docsUri, bytes32 payloadHash, uint64 listedAt, uint64 blockNumber))",
 ];
 
 const RWATOKEN_ABI = [
@@ -200,6 +202,7 @@ app.get("/v1/attestations/:target", async (req, reply) => {
     verdict: Number(a.verdict),
     findingsHash: Number(a.findingsHash),
     reportUri: a.reportUri,
+    payloadHash: a.payloadHash,
     attestedAt: Number(a.attestedAt),
     blockNumber: Number(a.blockNumber),
     explorer: `${BOTSCAN_URL}/address/${target}`,
@@ -218,6 +221,15 @@ app.post("/v1/issuances", { preHandler: x402Gate }, async (req, reply) => {
         pricePerTokenUsdt?: number | string;
         docsText?: string;
         docsUri?: string;
+        assetMetadata?: {
+          assetClass?: string;
+          jurisdiction?: string;
+          legalEntity?: string;
+          backingProofType?: string;
+          backingProofUri?: string;
+        };
+        issuerAddress?: string;
+        issuerSignature?: string;
       };
 
       const name = (body.name || "").trim();
@@ -226,17 +238,70 @@ app.post("/v1/issuances", { preHandler: x402Gate }, async (req, reply) => {
       const docsUri = (body.docsUri || "").trim();
       const priceUsdt = Number(body.pricePerTokenUsdt);
 
+      // Structured asset declaration — the issuer must sign it. It is
+      // committed on-chain so the reviewed content can never be swapped.
+      const assetMetadata = {
+        assetClass: (body.assetMetadata?.assetClass || "").trim(),
+        jurisdiction: (body.assetMetadata?.jurisdiction || "").trim(),
+        legalEntity: (body.assetMetadata?.legalEntity || "").trim(),
+        backingProofType: (body.assetMetadata?.backingProofType || "").trim(),
+        backingProofUri: (body.assetMetadata?.backingProofUri || "").trim(),
+      };
+      const issuerAddress = (body.issuerAddress || "").trim();
+      const issuerSignature = (body.issuerSignature || "").trim();
+
       if (!name || !symbol || !docsText) {
         throw new HttpError(400, { error: "missing_fields", message: "name, symbol and docsText are required" });
       }
       if (!Number.isFinite(priceUsdt) || priceUsdt <= 0) {
         throw new HttpError(400, { error: "invalid_price", message: "pricePerTokenUsdt must be > 0" });
       }
+      if (!assetMetadata.assetClass || !assetMetadata.jurisdiction || !assetMetadata.legalEntity || !assetMetadata.backingProofType) {
+        throw new HttpError(400, {
+          error: "missing_asset_metadata",
+          message: "assetClass, jurisdiction, legalEntity and backingProofType are required in assetMetadata",
+        });
+      }
+      if (!issuerAddress || !issuerSignature) {
+        throw new HttpError(400, {
+          error: "missing_issuer_signature",
+          message: "the issuer must sign the asset declaration (sign the exact payload the API returns)",
+        });
+      }
 
-      // 1. AI compliance gate — reviews the issuer documentation
+      // Canonical reviewed payload: the EXACT string both the issuer signs and
+      // the registry commits on-chain. Key order is fixed — web, e2e and API
+      // must build it identically.
+      const payloadJson = JSON.stringify({
+        name,
+        symbol,
+        docsText,
+        docsUri,
+        assetMetadata,
+      });
+      const payloadHash = ethers.keccak256(ethers.toUtf8Bytes(payloadJson));
+
+      // Verify the issuer really signed THIS declaration. Tampered fields
+      // change the hash, break the signature, and get rejected before any
+      // on-chain work happens.
+      let recovered: string;
+      try {
+        recovered = ethers.verifyMessage(payloadJson, issuerSignature);
+      } catch {
+        throw new HttpError(400, { error: "invalid_signature", message: "issuerSignature is not a valid signature" });
+      }
+      if (recovered.toLowerCase() !== issuerAddress.toLowerCase()) {
+        throw new HttpError(400, {
+          error: "signature_mismatch",
+          message: `signature does not match issuerAddress ${issuerAddress} (recovered ${recovered})`,
+        });
+      }
+
+      // 1. AI compliance gate — reviews the issuer documentation AND the
+      // structured declaration, checking the two are consistent.
       let dossier: ComplianceDossier;
       try {
-        dossier = await runComplianceGate({ name, symbol, docsText, docsUri });
+        dossier = await runComplianceGate({ name, symbol, docsText, docsUri, assetMetadata });
       } catch (e: any) {
         app.log.error({ err: e }, "compliance gate failed");
         throw new HttpError(503, { error: "gate_unavailable", message: `AI gate failed: ${e?.message || e}` });
@@ -249,6 +314,7 @@ app.post("/v1/issuances", { preHandler: x402Gate }, async (req, reply) => {
           listed: false,
           reason: "issuance_rejected_by_gate",
           dossier,
+          payloadHash,
         });
       }
 
@@ -288,18 +354,20 @@ app.post("/v1/issuances", { preHandler: x402Gate }, async (req, reply) => {
         const distributorAddr = await distributor.getAddress();
         app.log.info(`RevenueDistributor deployed: ${distributorAddr}`);
 
-        // 3c. Attest APPROVED on-chain (the gate verdict, verifier-signed)
+        // 3c. Attest APPROVED on-chain (the gate verdict, verifier-signed),
+        // binding the verdict to the exact reviewed payload hash.
         const attestations = new ethers.Contract(cfg.attestationRegistry, ATTESTATION_ABI, wallet);
         const findingsJson = JSON.stringify({ findings: dossier.findings, summary: dossier.summary });
         const findingsHash = ethers.getBytes(ethers.keccak256(ethers.toUtf8Bytes(findingsJson)))[0];
         const reportUri = `veriforge://dossier/${tokenAddr.toLowerCase()}/${dossier.checkedAt}`;
-        const attestTx = await attestations.attest(tokenAddr, dossier.score, 2, findingsHash, reportUri, { gasLimit: 600_000, nonce: await nextNonce() });
+        const attestTx = await attestations.attest(tokenAddr, dossier.score, 2, findingsHash, reportUri, payloadHash, { gasLimit: 600_000, nonce: await nextNonce() });
         const attestReceipt = await attestTx.wait();
         app.log.info(`Attestation stored: ${attestReceipt!.hash}`);
 
         // 3d. List in IssuanceRegistry — reverts on-chain if not APPROVED
+        // or if the payload commitment does not match the attestation.
         const registry = new ethers.Contract(cfg.issuanceRegistry, ISSUANCE_ABI, wallet);
-        const issueTx = await registry.issue(wallet.address, tokenAddr, distributorAddr, priceRaw, docsUri, { gasLimit: 600_000, nonce: await nextNonce() });
+        const issueTx = await registry.issue(wallet.address, tokenAddr, distributorAddr, priceRaw, docsUri, payloadHash, { gasLimit: 600_000, nonce: await nextNonce() });
         const issueReceipt = await issueTx.wait();
         const id = Number(await registry.count());
         app.log.info(`Issuance #${id} listed: ${issueReceipt!.hash}`);
@@ -311,6 +379,8 @@ app.post("/v1/issuances", { preHandler: x402Gate }, async (req, reply) => {
           listed: true,
           issuance_id: id,
           dossier,
+          payloadHash,
+          payloadJson,
           onChain: {
             token: tokenAddr,
             distributor: distributorAddr,
@@ -363,6 +433,7 @@ async function hydrateIssuance(registry: ethers.Contract, provider: ethers.JsonR
     pricePerTokenUsdt: ethers.formatUnits(i.pricePerToken, 6),
     totalSupply: ethers.formatUnits(totalSupply as bigint, 18),
     docsUri: i.docsUri,
+    payloadHash: i.payloadHash,
     accDividendPerToken: (accDividend as bigint).toString(),
     listedAt: Number(i.listedAt),
     blockNumber: Number(i.blockNumber),

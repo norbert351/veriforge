@@ -65,12 +65,37 @@ function parseDossier(text: string): ComplianceDossier | null {
   }
 }
 
-function buildPrompt(doc: { name: string; symbol: string; docsText: string; docsUri?: string }): string {
+export interface AssetMetadata {
+  assetClass: string; // e.g. real-estate, invoice, bond, commodity
+  jurisdiction: string; // e.g. UK, DE, US-Delaware
+  legalEntity: string; // registered entity name
+  backingProofType: string; // title-deed, escrow, invoice, custody, none
+  backingProofUri?: string; // link to the proof document
+}
+
+function buildPrompt(doc: {
+  name: string;
+  symbol: string;
+  docsText: string;
+  docsUri?: string;
+  assetMetadata?: AssetMetadata;
+}): string {
   return `You are the VeriForge AI compliance officer for BOT Chain, an RWA issuance platform.
 Review the issuer's documentation for a tokenized real-world asset issuance and produce a compliance dossier.
 Score 0-100 where >=70 is APPROVED, 40-69 is CAUTION, <40 is BLOCKED.
 
 Check for: clear asset backing, defined terms and price, revenue model, jurisdiction/legal entity, no red flags (missing docs, vague promises, no revenue model, no backing).
+
+Structured asset declaration (issuer-signed, committed on-chain):
+- Asset class: ${doc.assetMetadata?.assetClass || "NOT PROVIDED"}
+- Jurisdiction: ${doc.assetMetadata?.jurisdiction || "NOT PROVIDED"}
+- Legal entity: ${doc.assetMetadata?.legalEntity || "NOT PROVIDED"}
+- Backing proof type: ${doc.assetMetadata?.backingProofType || "NOT PROVIDED"}
+- Proof URI: ${doc.assetMetadata?.backingProofUri || "none"}
+
+Cross-check the structured declaration against the free-text documentation. Flag CONSISTENCY ISSUES:
+missing asset class, jurisdiction without a legal entity, backing proof type "none",
+or docs that describe a different asset than the declaration. These are red flags.
 
 Return ONLY JSON:
 {"score": <0-100 number>, "summary": "<1-2 sentence verdict>", "findings": [{"id":"<kebab-id>","severity":"critical|high|medium|low|info","title":"<short>","detail":"<specific>"}]}
@@ -88,6 +113,7 @@ export async function runComplianceGate(doc: {
   symbol: string;
   docsText: string;
   docsUri?: string;
+  assetMetadata?: AssetMetadata;
 }): Promise<ComplianceDossier> {
   if (!doc.docsText || doc.docsText.trim().length < 40) {
     // No real documentation to review — this is itself a red flag, not a fake pass.
