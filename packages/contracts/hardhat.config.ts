@@ -36,6 +36,7 @@ const config: HardhatUserConfig = {
   etherscan: {
     apiKey: {
       botchain: process.env.BOTSCAN_API_KEY || "",
+      "botchain-testnet": process.env.BOTSCAN_API_KEY || "blockscout",
     },
     customChains: [
       {
@@ -44,6 +45,14 @@ const config: HardhatUserConfig = {
         urls: {
           apiURL: "https://scan.botchain.ai/api",
           browserURL: "https://scan.botchain.ai",
+        },
+      },
+      {
+        network: "botchain-testnet",
+        chainId: 968,
+        urls: {
+          apiURL: "https://scan.bohr.life/api",
+          browserURL: "https://scan.bohr.life",
         },
       },
     ],
