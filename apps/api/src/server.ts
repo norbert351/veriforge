@@ -147,6 +147,8 @@ app.get("/v1/issuances", async (req, reply) => {
   for (let i = 1; i <= count; i++) {
     out.push(await hydrateIssuance(registry, provider, i));
   }
+  // newest first — the latest live issuance is the first card a judge sees
+  out.reverse();
   return { count, issuances: out };
 });
 

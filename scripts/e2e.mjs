@@ -35,7 +35,10 @@ async function main() {
   if (PUBLIC_CHAIN) {
     // Bohr/mainnet USDT has no mint: reuse the investor's existing balance,
     // top up only the shortfall from the issuer, and fund gas only if low.
-    const NEED = ethers.parseUnits("500", 6);
+    // 60 USDT covers: 1 (x402, returns to issuer as PAY_TO) + 50 (buy, also
+    // returns to issuer via the token) + buffer. The issuer funds the 25 USDT
+    // deposit out of the buy proceeds it receives back.
+    const NEED = ethers.parseUnits("60", 6);
     const invBal = await usdt.balanceOf(investor.address);
     if (invBal < NEED) {
       const fund = await usdt.transfer(investor.address, NEED - invBal);
@@ -56,26 +59,40 @@ async function main() {
   }
 
   // probe the endpoint -> expect 402
-  const docs = `Asset: Lagos Warehouse REIT (LAWR).
-Backing: A 12,000 sqm logistics warehouse in Ikeja, Lagos valued at 4.2M USDT by an independent valuation dated 2026-05-14 (report on file).
-Revenue model: Triple-net lease to a national logistics operator, 9.4% gross yield per annum, paid monthly in USDT.
-Legal: Issued by Lagos Warehouse Holdings Ltd, a Nigerian company registered in Lagos, regulated under SEC Nigeria digital asset guidelines. Custody with Meridian Trustees.
-Terms: 100,000 units at 10 USDT each. Quarterly buyback option at par plus accrued yield. No leverage, no off-chain rehypothecation.`;
+  const docs = `Asset: Abeokuta Gold & Minerals Fund (AGMF).
+Backing: 180 kg of LBMA-standard certified gold bullion vaulted in Lagos, valued at 8.4M USDT by a 2026-07-15 assay with the refiner certificate on file.
+Revenue model: Vault storage and lease yield of 6.8% gross per annum, distributions paid quarterly in USDT.
+Legal: Issued by Abeokuta Precious Metals Ltd, licensed by the Nigerian Ministry of Mines and Steel, custody with Meridian Trustees.
+Terms: 100,000 units at 10 USDT each. Quarterly distributions, buyback at assay value. No leverage, no off-chain rehypothecation.`;
   // asset declaration: issuer signs the EXACT canonical payload the API will
   // commit on-chain. Key order fixed (name, symbol, docsText, docsUri, assetMetadata).
+  // Upload the real proof PDF first so docsUri points at an actual document
+  // (the old "ipfs://QmTestLAWR" placeholder was a dead link for judges).
+  const uploadRes = await fetch(`${API}/v1/uploads`, {
+    method: "POST",
+    body: (() => {
+      const fd = new FormData();
+      fd.append("file", new Blob([docs], { type: "text/plain" }), "lawn-docs.txt");
+      return fd;
+    })(),
+  });
+  const up = await uploadRes.json();
+  const upFile = up?.files?.[0];
+  const docsUri = upFile?.url || "/uploads/unavailable";
+  console.log("1b. proof doc uploaded:", docsUri);
   const assetMetadata = {
-    assetClass: "real-estate",
-    jurisdiction: "NG-Lagos",
-    legalEntity: "Lagos Warehouse Holdings Ltd",
-    backingProofType: "title-deed + independent valuation",
-    backingProofUri: "ipfs://QmValuationLAWR2026",
+    assetClass: "gold-metals",
+    jurisdiction: "NG-OG",
+    legalEntity: "Abeokuta Precious Metals Ltd",
+    backingProofType: "LBMA assay + vault certificate",
+    backingProofUri: upFile?.url || "ipfs://QmValuationAGMF2026",
     assetPhotos: [],
   };
   const payloadJson = JSON.stringify({
-    name: "Lagos Warehouse REIT",
-    symbol: "LAWR",
+    name: "Abeokuta Gold & Minerals Fund",
+    symbol: "AGMF",
     docsText: docs,
-    docsUri: "ipfs://QmTestLAWR",
+    docsUri,
     assetMetadata,
   });
   const payloadHash = ethers.keccak256(ethers.toUtf8Bytes(payloadJson));
@@ -83,11 +100,11 @@ Terms: 100,000 units at 10 USDT each. Quarterly buyback option at par plus accru
   console.log("2. issuer signed asset declaration, payloadHash:", payloadHash.slice(0, 18) + "...");
 
   const body = {
-    name: "Lagos Warehouse REIT",
-    symbol: "LAWR",
+    name: "Abeokuta Gold & Minerals Fund",
+    symbol: "AGMF",
     pricePerTokenUsdt: 10,
     docsText: docs,
-    docsUri: "ipfs://QmTestLAWR",
+    docsUri,
     assetMetadata,
     issuerAddress: issuer.address,
     issuerSignature,

@@ -1,7 +1,6 @@
 [Unit]
 Description=VeriForge API (x402 gate + AI compliance + issuance pipeline)
-After=network.target veriforge-node.service
-Requires=veriforge-node.service
+After=network.target
 
 [Service]
 Type=simple

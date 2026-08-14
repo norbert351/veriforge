@@ -96,15 +96,15 @@ npx hardhat run scripts/deploy.ts --network botchain-testnet
 npx hardhat run scripts/deploy.ts --network botchain
 ```
 
-## Live on Bohr testnet (verified 2026-08-12)
+## Live on Bohr testnet (verified 2026-08-14)
 
 - RPC `https://rpc.bohr.life`, chain 968, explorer `https://scan.bohr.life`
 - USDT: `0x75edC9335175Fc0552D51D48439F229c10420fe3` (faucet: `https://faucet.botchain.ai/basic`)
-- AttestationRegistry: `0xF7ed39F4401062d9A5c45B7583d299887c5Cd560`
-- IssuanceRegistry: `0x9369c520DcE7DA60aB9B0EafcD618d8F3416ae65`
-- Example live issuance: LAWR token `0xdf0DE6b36718624d94dca1dab93df5d6c087801b` — see `https://scan.bohr.life/address/0xdf0DE6b36718624d94dca1dab93df5d6c087801b`
+- AttestationRegistry: `0x569ab13814bb10A0E661a1993c6372b40eEab57d` ([verified source](https://scan.bohr.life/address/0x569ab13814bb10A0E661a1993c6372b40eEab57d#code))
+- IssuanceRegistry: `0x2011C677a4EF5859975c54E593252a7b868a7269` ([verified source](https://scan.bohr.life/address/0x2011C677a4EF5859975c54E593252a7b868a7269#code))
+- Live issuances and their tokens/distributors are listed by `GET /v1/issuances` — see the marketplace.
 
-Full e2e loop executed on Bohr: x402 pay (1 USDT) → AI gate (score 90, APPROVED) → deploy → list → buy 5 units for 50 USDT → issuer deposits 25 USDT revenue → holder claims 25 USDT. All steps confirmed on-chain.
+Full e2e loop executed on Bohr: x402 pay (1 USDT) → AI gate (score 90, APPROVED) → deploy → list → buy units for USDT → issuer deposits revenue → holder claims. All steps confirmed on-chain.
 
 The stack is env-driven for either chain: `BOT_CHAIN_ID`, `BOT_RPC`, `BOT_USDT`, `X402_PAY_TO`, `BOTSCAN_URL` in `apps/api/.env`.
 
