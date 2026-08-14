@@ -43,7 +43,7 @@ async function main() {
     if (invBal < NEED) {
       const fund = await usdt.transfer(investor.address, NEED - invBal);
       await fund.wait();
-      console.log("1. topped investor up to 500 USDT from issuer (public chain)");
+      console.log(`1. topped investor up to ${ethers.formatUnits(NEED, 6)} USDT from issuer (public chain)`);
     } else {
       console.log("1. investor already has", ethers.formatUnits(invBal, 6), "USDT — skipped issuer funding");
     }
