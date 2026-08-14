@@ -59,7 +59,7 @@ The IssuanceRegistry calls the AttestationRegistry and reverts with `NotApproved
 # contracts
 cd packages/contracts
 npm install
-npx hardhat test          # 23 tests
+npx hardhat test          # 27 tests
 
 # local node + deploy (chain 677)
 npx hardhat node
