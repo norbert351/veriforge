@@ -112,6 +112,8 @@ The stack is env-driven for either chain: `BOT_CHAIN_ID`, `BOT_RPC`, `BOT_USDT`,
 
 Next.js 15 + RainbowKit (wagmi v2) wallet model. BOT Chain 677 is a first-class wagmi chain, so connect, chain switch, and account state are all provider-managed — no raw `window.ethereum` plumbing. The web server proxies `/v1/*` to the API (next.config rewrites), so the app works from a single origin with no CORS and no baked localhost base.
 
+![VeriForge marketplace with live issuances](docs/marketplace.png)
+
 | Flow | Path |
 |---|---|
 | Launch an asset (docs → AI gate → deploy → list) | Launch tab, 1 USDT via x402 |
