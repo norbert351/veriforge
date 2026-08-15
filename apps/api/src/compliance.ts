@@ -39,6 +39,11 @@ const GATE_KEY = process.env.FREEMODEL_API_KEY || "";
 const FALLBACK_URL = process.env.FALLBACK_GATE_URL || "";
 const FALLBACK_MODEL = process.env.FALLBACK_GATE_MODEL || "openai/gpt-4o-mini";
 const FALLBACK_KEY = process.env.FALLBACK_GATE_KEY || process.env.OPENROUTER_API_KEY || "";
+// 0. Gemini — the single gate rail when GEMINI_API_KEY is set. The other
+// rails are skipped entirely (datacenter IPs: AgentRouter is WAF-blocked,
+// OpenRouter needs paid credits; Gemini works from anywhere).
+const GEMINI_KEY = process.env.GEMINI_API_KEY || "";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-flash-latest";
 
 const APPROVE_THRESHOLD = 70;
 const CAUTION_THRESHOLD = 40;
@@ -144,7 +149,7 @@ export async function runComplianceGate(doc: {
       ],
       summary: "BLOCKED — no documentation to review.",
       checkedAt: Math.floor(Date.now() / 1000),
-      model: ANTHROPIC_MODEL,
+      model: GEMINI_KEY ? GEMINI_MODEL : ANTHROPIC_MODEL,
     };
   }
 
@@ -215,6 +220,52 @@ export async function runComplianceGate(doc: {
     const json: any = await res.json();
     const content: string = json?.choices?.[0]?.message?.content || "";
     return fromText(content, model);
+  }
+
+  // Rail 0: Gemini (generateContent) — sole rail when configured.
+  async function callGemini(): Promise<ComplianceDossier> {
+    if (!GEMINI_KEY) throw new Error("GEMINI_API_KEY not set");
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: system }] },
+          contents: [{ role: "user", parts: [{ text: userContent }] }],
+          generationConfig: { temperature: 0.2, maxOutputTokens: 900 },
+        }),
+        signal: AbortSignal.timeout(90000),
+      },
+    );
+
+    if (!res.ok) {
+      throw new Error(`Gemini upstream error ${res.status}: ${await res.text().catch(() => "")}`);
+    }
+
+    const json: any = await res.json();
+    const text: string =
+      json?.candidates?.[0]?.content?.parts?.map((p: any) => p.text || "").join("") || "";
+    if (!text) throw new Error("Gemini returned no text content block");
+    return fromText(text, GEMINI_MODEL);
+  }
+
+  // Gemini only when its key is present (explicit single-rail mode).
+  // Otherwise keep the legacy chain (Claude → proxy → OpenRouter).
+  if (GEMINI_KEY) {
+    // One retry: Gemini occasionally 503s on demand spikes or returns
+    // non-JSON output. Retrying the SAME model keeps the single-rail rule.
+    try {
+      return await callGemini();
+    } catch (firstErr) {
+      try {
+        return await callGemini();
+      } catch (retryErr) {
+        throw new Error(
+          `AI gate unreachable (gemini: ${(firstErr as Error).message}; retry: ${(retryErr as Error).message})`
+        );
+      }
+    }
   }
 
   // Claude first, then the legacy proxy, then OpenRouter. All fail loudly.

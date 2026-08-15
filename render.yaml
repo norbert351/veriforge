@@ -28,20 +28,12 @@ services:
         value: https://scan.bohr.life/api
       - key: X402_PAY_TO
         value: '0x73b16058d57a6337060677496d4A8e97A9554539'
-      - key: ANTHROPIC_BASE_URL
-        value: https://agentrouter.org
-      - key: ANTHROPIC_MODEL
-        value: claude-opus-4-8
-      - key: FALLBACK_GATE_URL
-        value: https://openrouter.ai/api/v1/chat/completions
-      - key: FALLBACK_GATE_MODEL
-        value: openai/gpt-4o-mini
+      - key: GEMINI_MODEL
+        value: gemini-flash-latest
       # Secrets — Render prompts for these at blueprint creation.
       - key: VERIFIER_PRIVATE_KEY
         sync: false
-      - key: ANTHROPIC_AUTH_TOKEN
-        sync: false
-      - key: FALLBACK_GATE_KEY
+      - key: GEMINI_API_KEY
         sync: false
 
   # ---------- Web (Next.js standalone, proxies /v1/* + /uploads to the API) ----------
