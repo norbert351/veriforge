@@ -39,7 +39,7 @@ The IssuanceRegistry calls the AttestationRegistry and reverts with `NotApproved
 
 ## The AI gate
 
-`apps/api/src/compliance.ts` sends the issuer's documentation to a real LLM and parses a structured dossier. Score >= 70 is APPROVED, 40-69 CAUTION, < 40 BLOCKED. If the LLM is unreachable the request fails loudly. No documentation at all scores 0 automatically. The gate runs a primary rail (`GATE_URL`) with an automatic failover (`FALLBACK_GATE_URL`), and the dossier records which model produced the verdict — no silent substitution.
+`apps/api/src/compliance.ts` sends the issuer's documentation to a real LLM and parses a structured dossier. Score >= 70 is APPROVED, 40-69 CAUTION, < 40 BLOCKED. If the LLM is unreachable the request fails loudly. No documentation at all scores 0 automatically. The gate runs on a single LLM rail, **Gemini** (`GEMINI_API_KEY` / `GEMINI_MODEL`, default `gemini-flash-latest`), and the dossier records which model produced the verdict — no silent substitution. The verdict is stored on-chain in the AttestationRegistry and visible on every marketplace card.
 
 ## API
 

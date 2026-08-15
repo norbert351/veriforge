@@ -518,12 +518,18 @@ async function hydrateIssuance(registry: ethers.Contract, provider: ethers.JsonR
   const i = await registry.getIssuance(id);
   const token = new ethers.Contract(i.token, RWATOKEN_ABI, provider);
   const distributor = new ethers.Contract(i.distributor, DISTRIBUTOR_ABI, provider);
-  const [name, symbol, totalSupply, accDividend] = await Promise.all([
+  const cfg = loadContractAddresses();
+  const attestations = cfg
+    ? new ethers.Contract(cfg.attestationRegistry, ATTESTATION_ABI, provider)
+    : null;
+  const [name, symbol, totalSupply, accDividend, att] = await Promise.all([
     token.name().catch(() => ""),
     token.symbol().catch(() => ""),
     token.totalSupply().catch(() => 0n),
     distributor.accDividendPerToken().catch(() => 0n),
+    attestations ? attestations.getAttestation(i.token).catch(() => null) : null,
   ]);
+  const hasAtt = !!att && att.target !== ethers.ZeroAddress;
   return {
     id: Number(i.id),
     issuer: i.issuer,
@@ -539,6 +545,10 @@ async function hydrateIssuance(registry: ethers.Contract, provider: ethers.JsonR
     listedAt: Number(i.listedAt),
     blockNumber: Number(i.blockNumber),
     explorer: `${BOTSCAN_URL}/address/${i.token}`,
+    // On-chain AI verdict from the attestation registry (verifier-signed).
+    score: hasAtt ? Number(att.score) : null,
+    verdict: hasAtt ? Number(att.verdict) : null,
+    attestedAt: hasAtt ? Number(att.attestedAt) : null,
   };
 }
 
