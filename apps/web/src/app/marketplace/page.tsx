@@ -28,6 +28,9 @@ interface Issuance {
   listedAt: number;
   blockNumber: number;
   explorer: string;
+  score: number | null;
+  verdict: number | null;
+  attestedAt: number | null;
 }
 
 interface Dossier {
@@ -718,9 +721,24 @@ function IssuanceCard({
         </a>
       </div>
       <div className="vf-row" style={{ gap: 8, fontSize: "0.75rem", color: "#9ca3af", marginBottom: 10, alignItems: "center" }}>
-        <span style={{ color: "#10b981", background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.3)", borderRadius: 999, padding: "2px 10px" }}>
-          ✓ AI-approved
-        </span>
+        {iss.score !== null && iss.verdict !== null ? (
+          <span
+            style={{
+              color: VERDICT_COLOR[iss.verdict] || "#9ca3af",
+              background: `${VERDICT_COLOR[iss.verdict] || "#9ca3af"}1a`,
+              border: `1px solid ${VERDICT_COLOR[iss.verdict] || "#9ca3af"}40`,
+              borderRadius: 999,
+              padding: "2px 10px",
+              fontWeight: 700,
+            }}
+          >
+            AI gate · {iss.score}/100 · {VERDICT_LABEL[iss.verdict] || iss.verdict}
+          </span>
+        ) : (
+          <span style={{ color: "#10b981", background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.3)", borderRadius: 999, padding: "2px 10px" }}>
+            ✓ AI-approved
+          </span>
+        )}
         <span style={{ fontFamily: "monospace" }}>
           {iss.payloadHash ? `docs committed ${iss.payloadHash.slice(0, 10)}…${iss.payloadHash.slice(-6)}` : "docs commitment on-chain"}
         </span>
