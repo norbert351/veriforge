@@ -1,0 +1,73 @@
+# VeriForge — Render blueprint (BOT Chain Builder Challenge #2, AI x RWA).
+# Deploy: Render dashboard > "New +" > "Blueprint" > connect github.com/norbert351/veriforge.
+# Two isolated services (one per app dir, no monorepo build), Bohr testnet (chain 968) defaults.
+# Switch to BOT mainnet (677) by editing the env values, no code change.
+
+services:
+  # ---------- API (Fastify, x402 + AI gate + issuance pipeline) ----------
+  - type: web
+    name: veriforge-api
+    runtime: node
+    repo: https://github.com/norbert351/veriforge
+    rootDir: apps/api
+    buildCommand: npm install && npm run build
+    startCommand: node dist/server.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: '22'
+      - key: BOT_CHAIN_ID
+        value: '968'
+      - key: BOT_RPC
+        value: https://rpc.bohr.life
+      - key: BOT_USDT
+        value: '0x75edC9335175Fc0552D51D48439F229c10420fe3'
+      - key: BOTSCAN_URL
+        value: https://scan.bohr.life
+      - key: BOTSCAN_API
+        value: https://scan.bohr.life/api
+      - key: X402_PAY_TO
+        value: '0x73b16058d57a6337060677496d4A8e97A9554539'
+      - key: ANTHROPIC_BASE_URL
+        value: https://agentrouter.org
+      - key: ANTHROPIC_MODEL
+        value: claude-opus-4-8
+      - key: FALLBACK_GATE_URL
+        value: https://openrouter.ai/api/v1/chat/completions
+      - key: FALLBACK_GATE_MODEL
+        value: openai/gpt-4o-mini
+      # Secrets — Render prompts for these at blueprint creation.
+      - key: VERIFIER_PRIVATE_KEY
+        sync: false
+      - key: ANTHROPIC_AUTH_TOKEN
+        sync: false
+      - key: FALLBACK_GATE_KEY
+        sync: false
+
+  # ---------- Web (Next.js standalone, proxies /v1/* + /uploads to the API) ----------
+  - type: web
+    name: veriforge-web
+    runtime: node
+    repo: https://github.com/norbert351/veriforge
+    rootDir: apps/web
+    # Standalone builds omit .next/static and public/ — copy both into the
+    # standalone tree or the page renders but never hydrates (images 404 too).
+    buildCommand: npm install && npm run build && cp -r .next/static .next/standalone/apps/web/.next/static && mkdir -p .next/standalone/apps/web/public && cp -r public/images .next/standalone/apps/web/public/
+    startCommand: node .next/standalone/apps/web/server.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: '22'
+      # Build-time: rewrites() inlines this. Must match the API service URL.
+      - key: API_ORIGIN
+        value: https://veriforge-api.onrender.com
+      - key: NEXT_PUBLIC_BOT_CHAIN_ID
+        value: '968'
+      - key: NEXT_PUBLIC_BOT_RPC
+        value: https://rpc.bohr.life
+      - key: NEXT_PUBLIC_BOTSCAN_URL
+        value: https://scan.bohr.life
+      - key: NEXT_PUBLIC_BOT_CHAIN_NAME
+        value: Bohr testnet (BOT Chain)
+      - key: NEXT_PUBLIC_USDT
+        value: '0x75edC9335175Fc0552D51D48439F229c10420fe3'

@@ -7,4 +7,7 @@ dist/
 packages/shared/contract-addresses.json
 .cache/
 .keys/
+# Commit the addresses: the API reads this file at runtime and a Render clone
+# has no other way to learn the deployed registries (public testnet data).
+# packages/shared/contract-addresses.json
 apps/api/uploads/
