@@ -1,0 +1,7 @@
+{
+  "chainId": 968,
+  "attestationRegistry": "0x569ab13814bb10A0E661a1993c6372b40eEab57d",
+  "issuanceRegistry": "0x2011C677a4EF5859975c54E593252a7b868a7269",
+  "verifier": "0x73b16058d57a6337060677496d4A8e97A9554539",
+  "deployedAt": "2026-08-13T00:11:22.886Z"
+}
