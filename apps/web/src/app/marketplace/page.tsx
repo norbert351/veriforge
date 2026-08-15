@@ -9,8 +9,9 @@ import Reveal from "@/components/Reveal";
 const BOT_CHAIN_ID = Number(process.env.NEXT_PUBLIC_BOT_CHAIN_ID || 677);
 const CHAIN_LABEL = process.env.NEXT_PUBLIC_BOT_CHAIN_NAME || "BOT Chain mainnet";
 
-// API is same-origin — the web server proxies /v1/* to the API (next.config rewrites).
-const API = "";
+// Direct API origin. The API has CORS origin:true, so cross-origin calls
+// work without the Next.js proxy (Netlify does not honor absolute rewrites).
+const API = process.env.NEXT_PUBLIC_API_URL || "https://veriforge-5w80.onrender.com";
 const USDT = process.env.NEXT_PUBLIC_USDT || "0xaBabc7Ddc03e501d190C676BF3d92ef0e6e87a3C";
 
 interface Issuance {
