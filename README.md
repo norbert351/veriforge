@@ -108,9 +108,27 @@ Full e2e loop executed on Bohr: x402 pay (1 USDT) → AI gate (score 90, APPROVE
 
 The stack is env-driven for either chain: `BOT_CHAIN_ID`, `BOT_RPC`, `BOT_USDT`, `X402_PAY_TO`, `BOTSCAN_URL` in `apps/api/.env`.
 
+## Official BOT Chain integration
+
+Verified against the [BOT Chain Project Integration Guide](https://dev-docs.botchain.ai/docs/Developers/quick-guide/): contracts deployed via Hardhat on the official RPC, verified on BOTScan, standard EVM tooling (ethers v6). The stack is fully env-driven, so mainnet is a config change away.
+
+| Resource | Link |
+|---|---|
+| Testnet faucet | https://faucet.botchain.ai |
+| Dev docs / quick guide | https://dev-docs.botchain.ai/docs/Developers/quick-guide/ |
+| BOTScan (testnet / mainnet) | https://scan.bohr.life / https://scan.botchain.ai |
+| Official DEX | https://dex.botchain.ai/#/swap |
+| Cross-chain bridge | https://bridge.botchain.ai |
+| Official wallet | https://wallet.botchain.ai |
+| CertiK audits | https://www.botchain.ai/docs/Chain.pdf |
+
+**Official contracts (per the guide):** WBOT `0xD5452816194a3784dBa983426cCe7c122F4abd30` · mainnet USDT `0xaBabc7Ddc03e501d190C676BF3d92ef0e6e87a3C` · BDEX Universal Router mainnet `0xaE6ae8630f7A888dEc0B9195C85F7515d5887655` / testnet `0x73Be0A1d8011B335A7aBeF6c45544E8ca4448AB5` · ERC-4337 bundler mainnet `https://bundler.botchain.ai/rpc` / testnet `https://bundler.bohr.life/rpc` · live BOT price `https://api.coinstore.com/api/v1/ticker/price;symbol=BOTUSDT`.
+
+**Mainnet readiness:** set `BOT_CHAIN_ID=677`, `BOT_RPC=https://rpc.botchain.ai`, `BOT_USDT=0xaBabc7Ddc03e501d190C676BF3d92ef0e6e87a3C`, `BOTSCAN_URL=https://scan.botchain.ai` (API env) and the matching `NEXT_PUBLIC_*` values (web build env), then deploy the registry pair with `npx hardhat run scripts/deploy.ts --network botchain`. No code change.
+
 ## Web
 
-Next.js 15 + RainbowKit (wagmi v2) wallet model. BOT Chain 677 is a first-class wagmi chain, so connect, chain switch, and account state are all provider-managed — no raw `window.ethereum` plumbing. The web server proxies `/v1/*` to the API (next.config rewrites), so the app works from a single origin with no CORS and no baked localhost base.
+Next.js 15 + RainbowKit (wagmi v2) wallet model. BOT Chain 968/677 is a first-class wagmi chain, so connect, chain switch, and account state are all provider-managed — no raw `window.ethereum` plumbing. The web calls the API directly at `NEXT_PUBLIC_API_URL` (CORS-enabled), so it deploys on any static host (Netlify, Vercel) with no proxy requirement.
 
 ![VeriForge marketplace with live issuances](docs/marketplace.png)
 

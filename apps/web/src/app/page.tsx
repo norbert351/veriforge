@@ -1,5 +1,6 @@
 import Header from "@/components/Header";
 import Reveal from "@/components/Reveal";
+import BotChainBand from "@/components/BotChainBand";
 
 /* ================= Landing (marketing page) ================= */
 
@@ -38,6 +39,9 @@ export default function Home() {
 
       {/* ── Film-style asset ticker ── */}
       <Ticker />
+
+      {/* ── Built on BOT Chain: official resources + live BOT price ── */}
+      <BotChainBand />
 
       {/* ── RWA asset classes ── */}
       <AssetsSection />
