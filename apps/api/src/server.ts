@@ -1,4 +1,4 @@
-// VeriForge API — RWA issuance + revenue distribution on BOT Chain.
+// VeriForge API — RWA issuance + revenue distribution on BOT Chain (dual-chain).
 //   GET  /health                       — free
 //   GET  /v1/fees                      — free
 //   GET  /v1/issuances                 — free, list from on-chain registry
@@ -8,6 +8,9 @@
 //   POST /v1/uploads                   — free, multipart proof/docs/photo upload
 //   GET  /uploads/*                    — free, served proof files (content-hashed)
 //   POST /v1/issuances                 — 1 USDT (x402): AI gate + deploy + list
+//
+// Dual-chain: every read accepts ?chainId=677|968 (default from BOT_CHAIN_ID);
+// the POST pipeline runs on the chain the buyer paid on (req.x402.chainId).
 
 import "dotenv/config";
 import Fastify from "fastify";
@@ -16,7 +19,8 @@ import multipart from "@fastify/multipart";
 import { ethers } from "ethers";
 import { createHash } from "node:crypto";
 import { x402Gate } from "./x402.js";
-import { getProvider, BOT_CHAIN_ID } from "./audit.js";
+import { getProvider } from "./audit.js";
+import { CHAINS, DEFAULT_CHAIN_ID, getChainInfo, resolveChainId } from "./chains.js";
 import { runComplianceGate, type ComplianceDossier } from "./compliance.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -44,16 +48,28 @@ await app.register(multipart, { limits: { fileSize: 15 * 1024 * 1024, files: 6 }
 
 // ─── Shared config ────────────────────────────────────────────────────────
 
-function loadContractAddresses(): { attestationRegistry: string; issuanceRegistry: string } | null {
+// contract-addresses.json is keyed by chainId: { "677": {...}, "968": {...} }.
+// Falls back to the legacy flat shape when the entry isn't keyed (migration).
+function loadContractAddresses(chainId: number): { attestationRegistry: string; issuanceRegistry: string } | null {
   try {
     const p = path.join(__dirname, "../../../packages/shared/contract-addresses.json");
     if (!fs.existsSync(p)) return null;
     const data = JSON.parse(fs.readFileSync(p, "utf8"));
-    if (!data.attestationRegistry || !data.issuanceRegistry) return null;
-    return data;
+    const entry = data[chainId];
+    if (entry && entry.attestationRegistry && entry.issuanceRegistry) return entry;
+    // legacy flat file
+    if (data.issuanceRegistry && Number(data.chainId) === chainId) return data;
+    return null;
   } catch {
     return null;
   }
+}
+
+// Resolve which chain a request targets: POSTs carry it from the x402 gate,
+// GET reads use the ?chainId= query param.
+function chainFromReq(req: any): number {
+  if (req?.x402?.chainId) return req.x402.chainId;
+  return resolveChainId(req?.query?.chainId);
 }
 
 const ATTESTATION_ABI = [
@@ -85,13 +101,6 @@ const DISTRIBUTOR_ABI = [
   "function token() view returns (address)",
 ];
 
-const RWATOKEN_BYTECODE_ABI = [
-  "constructor(string name, string symbol, address issuer, address usdt, uint256 pricePerToken)",
-  "function buy(uint256 usdtAmount) returns (uint256)",
-];
-
-const DISTRIBUTOR_BYTECODE_ABI = ["constructor(address token, address usdt)"];
-
 // Load real compiled artifacts from the contracts package (hardhat output).
 function loadArtifact(name: string): { abi: any[]; bytecode: string } {
   const p = path.join(__dirname, "../../../packages/contracts/artifacts/contracts", `${name}.sol`, `${name}.json`);
@@ -101,12 +110,11 @@ function loadArtifact(name: string): { abi: any[]; bytecode: string } {
 
 const RWATOKEN_ARTIFACT = loadArtifact("RwaToken");
 const DISTRIBUTOR_ARTIFACT = loadArtifact("RevenueDistributor");
-const BOTSCAN_URL = process.env.BOTSCAN_URL || "https://scan.botchain.ai";
 
-function getVerifierWallet() {
+function getVerifierWallet(chainId: number) {
   const key = process.env.VERIFIER_PRIVATE_KEY || "";
   if (!key) return null;
-  return new ethers.Wallet(key).connect(getProvider());
+  return new ethers.Wallet(key).connect(getProvider(chainId));
 }
 
 // Serialize issuance creation: the verifier wallet signs sequential txs, so
@@ -121,45 +129,63 @@ function serializePipeline<T>(fn: () => Promise<T>): Promise<T> {
 // ─── Routes ───────────────────────────────────────────────────────────────
 
 app.get("/health", async () => {
-  const cfg = loadContractAddresses();
+  const chains = Object.fromEntries(
+    Object.keys(CHAINS).map((k) => {
+      const id = Number(k);
+      const cfg = loadContractAddresses(id);
+      return [
+        String(id),
+        {
+          name: getChainInfo(id).name,
+          attestationRegistry: cfg?.attestationRegistry || null,
+          issuanceRegistry: cfg?.issuanceRegistry || null,
+        },
+      ];
+    })
+  );
   return {
     ok: true,
     service: "veriforge",
     chain: "bot-chain",
-    chain_id: BOT_CHAIN_ID,
-    attestationRegistry: cfg?.attestationRegistry || null,
-    issuanceRegistry: cfg?.issuanceRegistry || null,
+    default_chain_id: DEFAULT_CHAIN_ID,
+    chains,
     timestamp: new Date().toISOString(),
   };
 });
 
-app.get("/v1/fees", async () => ({
-  create_issuance: { amount_usdt: 1.0, asset: "USDT", network: `eip155:${BOT_CHAIN_ID}`, pay_to: process.env.X402_PAY_TO || "" },
-}));
+app.get("/v1/fees", async (req) => {
+  const chainId = chainFromReq(req);
+  const info = getChainInfo(chainId);
+  return {
+    create_issuance: { amount_usdt: 1.0, asset: "USDT", network: `eip155:${chainId}`, chain_id: chainId, pay_to: info.payTo },
+  };
+});
 
 app.get("/v1/issuances", async (req, reply) => {
-  const cfg = loadContractAddresses();
-  if (!cfg) return reply.status(503).send({ error: "not_deployed", message: "Registry not deployed yet" });
-  const provider = getProvider();
+  const chainId = chainFromReq(req);
+  const cfg = loadContractAddresses(chainId);
+  if (!cfg) return reply.status(503).send({ error: "not_deployed", message: `Registry not deployed on chain ${chainId} yet` });
+  const provider = getProvider(chainId);
   const registry = new ethers.Contract(cfg.issuanceRegistry, ISSUANCE_ABI, provider);
   const count = Number(await registry.count());
   const out: any[] = [];
   for (let i = 1; i <= count; i++) {
-    out.push(await hydrateIssuance(registry, provider, i));
+    out.push(await hydrateIssuance(registry, provider, i, chainId));
   }
   // newest first — the latest live issuance is the first card a judge sees
   out.reverse();
-  return { count, issuances: out };
+  return { chainId, count, issuances: out };
 });
 
 app.get("/v1/issuances/:id", async (req, reply) => {
   const { id } = req.params as { id: string };
-  const cfg = loadContractAddresses();
-  if (!cfg) return reply.status(503).send({ error: "not_deployed", message: "Registry not deployed yet" });
-  const provider = getProvider();
+  const chainId = chainFromReq(req);
+  const cfg = loadContractAddresses(chainId);
+  if (!cfg) return reply.status(503).send({ error: "not_deployed", message: `Registry not deployed on chain ${chainId} yet` });
+  const provider = getProvider(chainId);
   const registry = new ethers.Contract(cfg.issuanceRegistry, ISSUANCE_ABI, provider);
   try {
-    return await hydrateIssuance(registry, provider, Number(id));
+    return await hydrateIssuance(registry, provider, Number(id), chainId);
   } catch {
     return reply.status(404).send({ error: "not_found", message: "No such issuance" });
   }
@@ -170,9 +196,10 @@ app.get("/v1/issuances/:id/claimable/:holder", async (req, reply) => {
   if (!ethers.isAddress(holder)) {
     return reply.status(400).send({ error: "invalid_address", message: "Not a valid holder address" });
   }
-  const cfg = loadContractAddresses();
-  if (!cfg) return reply.status(503).send({ error: "not_deployed", message: "Registry not deployed yet" });
-  const provider = getProvider();
+  const chainId = chainFromReq(req);
+  const cfg = loadContractAddresses(chainId);
+  if (!cfg) return reply.status(503).send({ error: "not_deployed", message: `Registry not deployed on chain ${chainId} yet` });
+  const provider = getProvider(chainId);
   const registry = new ethers.Contract(cfg.issuanceRegistry, ISSUANCE_ABI, provider);
   try {
     const issuance = await registry.getIssuance(Number(id));
@@ -180,6 +207,7 @@ app.get("/v1/issuances/:id/claimable/:holder", async (req, reply) => {
     const claimable = await distributor.claimable(holder);
     return {
       issuance_id: Number(issuance.id),
+      chain_id: chainId,
       holder,
       token: issuance.token,
       distributor: issuance.distributor,
@@ -196,16 +224,19 @@ app.get("/v1/attestations/:target", async (req, reply) => {
   if (!ethers.isAddress(target)) {
     return reply.status(400).send({ error: "invalid_address", message: "Not a valid address" });
   }
-  const cfg = loadContractAddresses();
-  if (!cfg) return reply.status(503).send({ error: "not_deployed", message: "Registry not deployed yet" });
-  const provider = getProvider();
+  const chainId = chainFromReq(req);
+  const cfg = loadContractAddresses(chainId);
+  if (!cfg) return reply.status(503).send({ error: "not_deployed", message: `Registry not deployed on chain ${chainId} yet` });
+  const provider = getProvider(chainId);
   const attestations = new ethers.Contract(cfg.attestationRegistry, ATTESTATION_ABI, provider);
   const a = await attestations.getAttestation(target);
   if (!a || a.target === ethers.ZeroAddress) {
     return reply.status(404).send({ error: "not_found", message: "No attestation for this target" });
   }
+  const info = getChainInfo(chainId);
   return {
     target,
+    chain_id: chainId,
     score: Number(a.score),
     verdict: Number(a.verdict),
     findingsHash: Number(a.findingsHash),
@@ -213,7 +244,7 @@ app.get("/v1/attestations/:target", async (req, reply) => {
     payloadHash: a.payloadHash,
     attestedAt: Number(a.attestedAt),
     blockNumber: Number(a.blockNumber),
-    explorer: `${BOTSCAN_URL}/address/${target}`,
+    explorer: `${info.scan}/address/${target}`,
   };
 });
 
@@ -298,6 +329,10 @@ async function extractUploadText(uri: string | undefined): Promise<string> {
 }
 
 app.post("/v1/issuances", { preHandler: x402Gate }, async (req, reply) => {
+  // The x402 gate ran first and resolved the chain (req.x402.chainId).
+  const chainId = chainFromReq(req);
+  const chainInfo = getChainInfo(chainId);
+
   // One issuance pipeline at a time — the verifier wallet signs sequential txs.
   // The pipeline returns plain data or throws HttpError; the handler replies
   // exactly once. Never send from inside the serialized fn (Fastify double-send).
@@ -420,16 +455,16 @@ app.post("/v1/issuances", { preHandler: x402Gate }, async (req, reply) => {
       }
 
       // 3. Gate approves — deploy RwaToken + RevenueDistributor, attest, list.
-      const wallet = getVerifierWallet();
+      const wallet = getVerifierWallet(chainId);
       if (!wallet) {
         throw new HttpError(503, { error: "not_configured", message: "VERIFIER_PRIVATE_KEY not set" });
       }
-      const cfg = loadContractAddresses();
+      const cfg = loadContractAddresses(chainId);
       if (!cfg) {
-        throw new HttpError(503, { error: "not_deployed", message: "Registry not deployed yet" });
+        throw new HttpError(503, { error: "not_deployed", message: `Registry not deployed on chain ${chainId} yet` });
       }
 
-      const usdt = process.env.BOT_USDT || "0xaBabc7Ddc03e501d190C676BF3d92ef0e6e87a3C";
+      const usdt = chainInfo.usdt;
       const priceRaw = ethers.parseUnits(String(priceUsdt.toFixed(6)), 6);
 
       // Deterministic nonce sequencing: fetch once, increment per tx. Avoids the
@@ -446,14 +481,14 @@ app.post("/v1/issuances", { preHandler: x402Gate }, async (req, reply) => {
         const token = await tokenFactory.deploy(name, symbol, wallet.address, usdt, priceRaw, { nonce: await nextNonce() });
         await token.waitForDeployment();
         const tokenAddr = await token.getAddress();
-        app.log.info(`RwaToken deployed: ${tokenAddr}`);
+        app.log.info(`[chain ${chainId}] RwaToken deployed: ${tokenAddr}`);
 
         // 3b. Deploy RevenueDistributor
         const distFactory = new ethers.ContractFactory(DISTRIBUTOR_ARTIFACT.abi, DISTRIBUTOR_ARTIFACT.bytecode, wallet);
         const distributor = await distFactory.deploy(tokenAddr, usdt, { nonce: await nextNonce() });
         await distributor.waitForDeployment();
         const distributorAddr = await distributor.getAddress();
-        app.log.info(`RevenueDistributor deployed: ${distributorAddr}`);
+        app.log.info(`[chain ${chainId}] RevenueDistributor deployed: ${distributorAddr}`);
 
         // 3c. Attest APPROVED on-chain (the gate verdict, verifier-signed),
         // binding the verdict to the exact reviewed payload hash.
@@ -463,7 +498,7 @@ app.post("/v1/issuances", { preHandler: x402Gate }, async (req, reply) => {
         const reportUri = `veriforge://dossier/${tokenAddr.toLowerCase()}/${dossier.checkedAt}`;
         const attestTx = await attestations.attest(tokenAddr, dossier.score, 2, findingsHash, reportUri, payloadHash, { gasLimit: 600_000, nonce: await nextNonce() });
         const attestReceipt = await attestTx.wait();
-        app.log.info(`Attestation stored: ${attestReceipt!.hash}`);
+        app.log.info(`[chain ${chainId}] Attestation stored: ${attestReceipt!.hash}`);
 
         // 3d. List in IssuanceRegistry — reverts on-chain if not APPROVED
         // or if the payload commitment does not match the attestation.
@@ -471,13 +506,14 @@ app.post("/v1/issuances", { preHandler: x402Gate }, async (req, reply) => {
         const issueTx = await registry.issue(wallet.address, tokenAddr, distributorAddr, priceRaw, docsUri, payloadHash, { gasLimit: 600_000, nonce: await nextNonce() });
         const issueReceipt = await issueTx.wait();
         const id = Number(await registry.count());
-        app.log.info(`Issuance #${id} listed: ${issueReceipt!.hash}`);
+        app.log.info(`[chain ${chainId}] Issuance #${id} listed: ${issueReceipt!.hash}`);
 
-        const hydrated = await hydrateIssuance(new ethers.Contract(cfg.issuanceRegistry, ISSUANCE_ABI, getProvider()), getProvider(), id);
+        const hydrated = await hydrateIssuance(new ethers.Contract(cfg.issuanceRegistry, ISSUANCE_ABI, getProvider(chainId)), getProvider(chainId), id, chainId);
 
         return {
           ok: true,
           listed: true,
+          chain_id: chainId,
           issuance_id: id,
           dossier,
           payloadHash,
@@ -487,7 +523,7 @@ app.post("/v1/issuances", { preHandler: x402Gate }, async (req, reply) => {
             distributor: distributorAddr,
             attestationTx: attestReceipt!.hash,
             listingTx: issueReceipt!.hash,
-            explorer: `${BOTSCAN_URL}/tx/${issueReceipt!.hash}`,
+            explorer: `${chainInfo.scan}/tx/${issueReceipt!.hash}`,
           },
           issuance: hydrated,
         };
@@ -514,11 +550,11 @@ app.post("/v1/issuances", { preHandler: x402Gate }, async (req, reply) => {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
-async function hydrateIssuance(registry: ethers.Contract, provider: ethers.JsonRpcProvider, id: number) {
+async function hydrateIssuance(registry: ethers.Contract, provider: ethers.JsonRpcProvider, id: number, chainId: number) {
   const i = await registry.getIssuance(id);
   const token = new ethers.Contract(i.token, RWATOKEN_ABI, provider);
   const distributor = new ethers.Contract(i.distributor, DISTRIBUTOR_ABI, provider);
-  const cfg = loadContractAddresses();
+  const cfg = loadContractAddresses(chainId);
   const attestations = cfg
     ? new ethers.Contract(cfg.attestationRegistry, ATTESTATION_ABI, provider)
     : null;
@@ -530,8 +566,10 @@ async function hydrateIssuance(registry: ethers.Contract, provider: ethers.JsonR
     attestations ? attestations.getAttestation(i.token).catch(() => null) : null,
   ]);
   const hasAtt = !!att && att.target !== ethers.ZeroAddress;
+  const info = getChainInfo(chainId);
   return {
     id: Number(i.id),
+    chain_id: chainId,
     issuer: i.issuer,
     token: i.token,
     distributor: i.distributor,
@@ -544,7 +582,7 @@ async function hydrateIssuance(registry: ethers.Contract, provider: ethers.JsonR
     accDividendPerToken: (accDividend as bigint).toString(),
     listedAt: Number(i.listedAt),
     blockNumber: Number(i.blockNumber),
-    explorer: `${BOTSCAN_URL}/address/${i.token}`,
+    explorer: `${info.scan}/address/${i.token}`,
     // On-chain AI verdict from the attestation registry (verifier-signed).
     score: hasAtt ? Number(att.score) : null,
     verdict: hasAtt ? Number(att.verdict) : null,

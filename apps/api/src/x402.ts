@@ -1,25 +1,18 @@
-// x402 payment gate — real protocol, BOT Chain.
-// BOT Chain mainnet: chain 677, USDT bridged at 0xaBabc7Ddc03e501d190C676BF3d92ef0e6e87a3C.
-// First contact returns 402 + PAYMENT-REQUIRED challenge. Replay with a
-// PAYMENT-SIGNATURE header carrying {accepted, signature, payer}:
+// x402 payment gate — real protocol, dual-chain BOT Chain (mainnet 677 + Bohr testnet 968).
+// First contact returns 402 + PAYMENT-REQUIRED challenge offering BOTH chains.
+// Replay with a PAYMENT-SIGNATURE header carrying {accepted, signature, payer}:
 //   - accepted   the challenge entry the buyer agreed to (amount/chainId/payTo)
 //   - signature  EIP-712 signature over that entry, from the payer's wallet
 //   - payer      the wallet that actually sent the USDT
-// The gate verifies the signature AND that the exact amount reached payTo
-// on-chain (Transfer event scan). No header = 402 challenge.
+// The gate resolves the chain from the accepted entry's chainId, verifies the
+// signature, and confirms that the exact amount reached payTo on THAT chain's
+// USDT contract (Transfer event scan). No header = 402 challenge.
 
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { ethers } from "ethers";
+import { CHAINS, getChainInfo, resolveChainId } from "./chains.js";
 
-// BOT Chain: mainnet 677 (USDT 0xaBabc7Ddc03e501d190C676BF3d92ef0e6e87a3C)
-// or Bohr testnet 968 (USDT 0x75edC9335175Fc0552D51D48439F229c10420fe3).
-// Chain is configurable via BOT_CHAIN_ID, defaults to mainnet 677.
-const PAY_TO = process.env.X402_PAY_TO || "";
-const CHAIN_ID = Number(process.env.BOT_CHAIN_ID || 677);
-const USDT = process.env.BOT_USDT || "0xaBabc7Ddc03e501d190C676BF3d92ef0e6e87a3C";
-const RPC = process.env.BOT_RPC || "https://rpc.botchain.ai";
-
-// Fee per route prefix, in USDT
+// Fee per route prefix, in USDT (same across both chains).
 const ROUTE_FEES: Record<string, number> = {
   "/v1/issuances": 1.0,
 };
@@ -31,22 +24,26 @@ function getFee(path: string): number {
   return 0.01;
 }
 
+function buildChainEntry(chainId: number, amount: number, resource: string) {
+  const info = getChainInfo(chainId);
+  return {
+    scheme: "exact",
+    network: `eip155:${chainId}`,
+    chainId,
+    asset: info.usdt,
+    amount: String(Math.round(amount * 1e6)),
+    payTo: info.payTo,
+    maxTimeoutSeconds: 300,
+    description: `VeriForge: ${resource}`,
+    extra: { name: "Tether USD", version: "1" },
+  };
+}
+
 function buildChallenge(amount: number, resource: string): string {
+  // Offer BOTH chains so the buyer pays on whichever network they selected.
   const payload = {
     x402Version: 2,
-    accepts: [
-      {
-        scheme: "exact",
-        network: `eip155:${CHAIN_ID}`,
-        chainId: CHAIN_ID,
-        asset: USDT,
-        amount: String(Math.round(amount * 1e6)),
-        payTo: PAY_TO,
-        maxTimeoutSeconds: 300,
-        description: `VeriForge: ${resource}`,
-        extra: { name: "Tether USD", version: "1" },
-      },
-    ],
+    accepts: Object.keys(CHAINS).map((k) => buildChainEntry(Number(k), amount, resource)),
     resource,
   };
   return Buffer.from(JSON.stringify(payload)).toString("base64");
@@ -74,37 +71,35 @@ const EIP712_TYPES = {
   ],
 };
 
-function toPaymentMessage(accepted: any): Record<string, any> {
+function toPaymentMessage(accepted: any, chainId: number): Record<string, any> {
+  const info = getChainInfo(chainId);
   return {
     scheme: String(accepted.scheme || "exact"),
-    network: String(accepted.network || ""),
-    chainId: BigInt(accepted.chainId || CHAIN_ID),
-    asset: String(accepted.asset || USDT),
+    network: String(accepted.network || `eip155:${chainId}`),
+    chainId: BigInt(accepted.chainId || chainId),
+    asset: String(accepted.asset || info.usdt),
     amount: String(accepted.amount || ""),
-    payTo: String(accepted.payTo || ""),
+    payTo: String(accepted.payTo || info.payTo),
     maxTimeoutSeconds: BigInt(accepted.maxTimeoutSeconds || 300),
     description: String(accepted.description || ""),
     extra: typeof accepted.extra === "string" ? accepted.extra : JSON.stringify(accepted.extra || {}),
   };
 }
 
-// Scan USDT Transfer events from `from` to `to` of exactly `value` within the
-// last `maxBlocks`. Proves the payment settled on-chain.
-async function paymentSettled(from: string, to: string, value: bigint, maxBlocks = 50): Promise<string | null> {
+// Scan the USDT Transfer events on the given chain from `from` to `to` of
+// exactly `value` within the last `maxBlocks`. Proves the payment settled.
+async function paymentSettled(chainId: number, from: string, to: string, value: bigint, maxBlocks = 50): Promise<string | null> {
   try {
-    const provider = new ethers.JsonRpcProvider(RPC, CHAIN_ID, { staticNetwork: true });
+    const info = getChainInfo(chainId);
+    const provider = new ethers.JsonRpcProvider(info.rpc, chainId, { staticNetwork: true });
     const usdt = new ethers.Contract(
-      USDT,
+      info.usdt,
       ["event Transfer(address indexed from, address indexed to, uint256 value)"],
       provider
     );
     const latest = await provider.getBlockNumber();
-    // Only `from`/`to` are indexed — `value` cannot be a topic filter. Filter
-    // the indexed pair, then confirm the exact amount in the decoded args.
     const filter = usdt.filters.Transfer(from, to);
     const events = await usdt.queryFilter(filter, Math.max(0, latest - maxBlocks), latest);
-    // Newest-first: a fresh payment must win over an older identical one from
-    // the same payer (the older is likely already consumed).
     const match = [...events].reverse().find((e: any) => e.args && BigInt(e.args.value) === value);
     return match ? match.transactionHash : null;
   } catch {
@@ -143,14 +138,19 @@ export async function x402Gate(req: FastifyRequest, reply: FastifyReply, next: (
         return reply.status(402).send({ error: "invalid_payment", message: "accepted entry missing" });
       }
 
+      // Resolve the chain from the accepted entry — the buyer picks which
+      // network to pay on; the gate validates against THAT chain.
+      const chainId = resolveChainId(accepted.chainId);
+      const info = getChainInfo(chainId);
+
       const expected = String(Math.round(getFee(req.url) * 1e6));
       if (String(accepted.amount) !== expected) {
         return reply.status(402).send({ error: "invalid_payment", message: "amount mismatch" });
       }
-      if (String(accepted.chainId) !== String(CHAIN_ID)) {
+      if (String(accepted.chainId) !== String(chainId)) {
         return reply.status(402).send({ error: "invalid_payment", message: "chain mismatch" });
       }
-      if (String(accepted.payTo).toLowerCase() !== PAY_TO.toLowerCase()) {
+      if (String(accepted.payTo).toLowerCase() !== info.payTo.toLowerCase()) {
         return reply.status(402).send({ error: "invalid_payment", message: "payTo mismatch" });
       }
 
@@ -163,7 +163,7 @@ export async function x402Gate(req: FastifyRequest, reply: FastifyReply, next: (
       let recovered = "";
       try {
         recovered = ethers
-          .verifyTypedData(EIP712_DOMAIN(CHAIN_ID), EIP712_TYPES, toPaymentMessage(accepted), signature)
+          .verifyTypedData(EIP712_DOMAIN(chainId), EIP712_TYPES, toPaymentMessage(accepted, chainId), signature)
           .toLowerCase();
       } catch {
         return reply.status(402).send({ error: "invalid_payment", message: "signature does not verify" });
@@ -172,10 +172,8 @@ export async function x402Gate(req: FastifyRequest, reply: FastifyReply, next: (
         return reply.status(402).send({ error: "invalid_payment", message: "signer does not match payer" });
       }
 
-      // The payment must actually be settled on-chain: exact USDT amount from
-      // the payer to payTo in a recent block window. And it must not have been
-      // consumed by an earlier request — one transfer buys one issuance.
-      const txHash = await paymentSettled(payer, PAY_TO.toLowerCase(), BigInt(expected));
+      // The payment must actually be settled on-chain on the selected chain.
+      const txHash = await paymentSettled(chainId, payer, info.payTo.toLowerCase(), BigInt(expected));
       if (!txHash) {
         return reply.status(402).send({ error: "payment_not_settled", message: "no matching on-chain transfer found" });
       }
@@ -183,7 +181,7 @@ export async function x402Gate(req: FastifyRequest, reply: FastifyReply, next: (
         return reply.status(402).send({ error: "payment_already_used", message: "this payment was already consumed" });
       }
 
-      (req as any).x402 = { paid: true, payer, txHash };
+      (req as any).x402 = { paid: true, chainId, payer, txHash };
       return next();
     } catch (e: any) {
       return reply.status(402).send({ error: "invalid_payment", message: e?.message || "invalid header" });
@@ -200,9 +198,10 @@ export async function x402Gate(req: FastifyRequest, reply: FastifyReply, next: (
       error: "payment_required",
       message: "Payment required via the OKX Agent Payments Protocol.",
       amount_usdt: fee,
-      pay_to: PAY_TO,
-      network: `eip155:${CHAIN_ID}`,
-      chain_id: CHAIN_ID,
-      asset: USDT,
+      chains: Object.keys(CHAINS).reduce<Record<string, any>>((acc, k) => {
+        const c = getChainInfo(Number(k));
+        acc[String(c.id)] = { network: `eip155:${c.id}`, chain_id: c.id, asset: c.usdt, pay_to: c.payTo };
+        return acc;
+      }, {}),
     });
 }

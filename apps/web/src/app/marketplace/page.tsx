@@ -5,14 +5,12 @@ import { BrowserProvider, Contract, parseUnits, formatUnits } from "ethers";
 import { useAccount } from "wagmi";
 import Header from "@/components/Header";
 import Reveal from "@/components/Reveal";
-
-const BOT_CHAIN_ID = Number(process.env.NEXT_PUBLIC_BOT_CHAIN_ID || 677);
-const CHAIN_LABEL = process.env.NEXT_PUBLIC_BOT_CHAIN_NAME || "BOT Chain mainnet";
+import { useChain } from "@/lib/chain-context";
+import { getChain } from "@/lib/chains";
 
 // Direct API origin. The API has CORS origin:true, so cross-origin calls
 // work without the Next.js proxy (Netlify does not honor absolute rewrites).
 const API = process.env.NEXT_PUBLIC_API_URL || "https://veriforge-5w80.onrender.com";
-const USDT = process.env.NEXT_PUBLIC_USDT || "0xaBabc7Ddc03e501d190C676BF3d92ef0e6e87a3C";
 
 interface Issuance {
   id: number;
@@ -68,12 +66,12 @@ const EIP712_TYPES = {
   ],
 };
 
-function paymentMessage(accepted: any) {
+function paymentMessage(accepted: any, chain: { id: number; usdt: string }) {
   return {
     scheme: String(accepted.scheme || "exact"),
-    network: String(accepted.network || ""),
-    chainId: BigInt(accepted.chainId || BOT_CHAIN_ID),
-    asset: String(accepted.asset || USDT),
+    network: String(accepted.network || `eip155:${chain.id}`),
+    chainId: BigInt(accepted.chainId || chain.id),
+    asset: String(accepted.asset || chain.usdt),
     amount: String(accepted.amount || ""),
     payTo: String(accepted.payTo || ""),
     maxTimeoutSeconds: BigInt(accepted.maxTimeoutSeconds || 300),
@@ -83,7 +81,10 @@ function paymentMessage(accepted: any) {
 }
 
 // Full x402 checkout: probe → 402 challenge → wallet signs + pays → replay.
-async function paidPost(path: string, body: unknown): Promise<Response> {
+// Runs on the chain selected by the toggle (chainId), paying the USDT of THAT
+// chain and signing with THAT chain's EIP-712 domain.
+async function paidPost(path: string, body: unknown, chainId: number): Promise<Response> {
+  const chain = getChain(chainId);
   const probe = await fetch(`${API}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -94,7 +95,9 @@ async function paidPost(path: string, body: unknown): Promise<Response> {
   const challengeB64 = probe.headers.get("payment-required");
   if (!challengeB64) return probe;
   const challenge = JSON.parse(atob(challengeB64));
-  const accepted = challenge.accepts?.[0];
+  // Pick the challenge entry for the SELECTED chain (the API offers both).
+  const accepted =
+    challenge.accepts?.find((a: any) => Number(a.chainId) === chainId) || challenge.accepts?.[0];
   if (!accepted) return probe;
 
   const eth = getEth();
@@ -103,15 +106,15 @@ async function paidPost(path: string, body: unknown): Promise<Response> {
   const signer = await provider.getSigner();
   const payer = (await signer.getAddress()).toLowerCase();
 
-  // 1. Send the exact USDT amount to payTo (the on-chain settlement).
+  // 1. Send the exact USDT amount (of the selected chain) to payTo.
   const usdt = new Contract(accepted.asset, ERC20_ABI, signer);
   const amount = BigInt(accepted.amount);
   const tx = await usdt.transfer(accepted.payTo, amount);
   await tx.wait();
 
-  // 2. Sign the accepted entry (EIP-712), bound to amount/payTo/chainId/asset.
-  const domain = { name: "x402", version: "2", chainId: BOT_CHAIN_ID };
-  const signature = await signer.signTypedData(domain, EIP712_TYPES, paymentMessage(accepted));
+  // 2. Sign the accepted entry (EIP-712), bound to this chain.
+  const domain = { name: "x402", version: "2", chainId };
+  const signature = await signer.signTypedData(domain, EIP712_TYPES, paymentMessage(accepted, chain));
 
   // 3. Replay with the payment proof.
   const header = btoa(JSON.stringify({ accepted, signature, payer }));
@@ -148,6 +151,7 @@ async function uploadFiles(files: File[], kind: string): Promise<{ url: string; 
 
 export default function Marketplace() {
   const { address } = useAccount();
+  const { chainId: selChain, info: chainInfo } = useChain();
   const [tab, setTab] = useState<"launch" | "market">("market");
 
   // issuer form
@@ -182,7 +186,7 @@ export default function Marketplace() {
     setBusy(true);
     setError("");
     try {
-      const res = await fetch(`${API}/v1/issuances`);
+      const res = await fetch(`${API}/v1/issuances?chainId=${selChain}`);
       if (!res.ok) throw new Error(`API ${res.status}`);
       const data = await res.json();
       setIssuances(data.issuances || []);
@@ -191,7 +195,7 @@ export default function Marketplace() {
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [selChain]);
 
   useEffect(() => {
     loadIssuances();
@@ -202,7 +206,7 @@ export default function Marketplace() {
     const next: Record<number, string> = {};
     for (const i of issuances) {
       try {
-        const res = await fetch(`${API}/v1/issuances/${i.id}/claimable/${address}`);
+        const res = await fetch(`${API}/v1/issuances/${i.id}/claimable/${address}?chainId=${selChain}`);
         if (res.ok) {
           const d = await res.json();
           next[i.id] = d.claimable_usdt;
@@ -212,7 +216,7 @@ export default function Marketplace() {
       }
     }
     setClaimables(next);
-  }, [address, issuances]);
+  }, [address, issuances, selChain]);
 
   useEffect(() => {
     loadClaimables();
@@ -357,7 +361,7 @@ export default function Marketplace() {
         assetMetadata,
         issuerAddress: declAddress,
         issuerSignature: declSignature,
-      });
+      }, selChain);
       if (res.status === 402) {
         const body = await res.json();
         setNotice(`Payment required: ${body.message || "1 USDT on BOT Chain"}. Confirm the transfer and signature in your wallet.`);
@@ -377,7 +381,7 @@ export default function Marketplace() {
     } finally {
       setLaunching(false);
     }
-  }, [fName, fSymbol, fPrice, fDocs, fDocsUri, fDocsFile, fAssetClass, fJurisdiction, fLegalEntity, fProofType, fProofUri, fProofFile, fPhotos, declSignature, declAddress, loadIssuances]);
+  }, [fName, fSymbol, fPrice, fDocs, fDocsUri, fDocsFile, fAssetClass, fJurisdiction, fLegalEntity, fProofType, fProofUri, fProofFile, fPhotos, declSignature, declAddress, loadIssuances, selChain]);
 
   const buyUnits = useCallback(
     async (iss: Issuance, usdtAmount: string) => {
@@ -394,8 +398,8 @@ export default function Marketplace() {
         const signer = await provider.getSigner();
         const amount = parseUnits(usdtAmount, 6);
 
-        // approve USDT to the token contract
-        const usdt = new Contract(USDT, ERC20_ABI, signer);
+        // approve USDT to the token contract (selected chain's USDT)
+        const usdt = new Contract(chainInfo.usdt, ERC20_ABI, signer);
         const allowance = await usdt.allowance(await signer.getAddress(), iss.token);
         if (allowance < amount) {
           const tx = await usdt.approve(iss.token, amount);
@@ -414,7 +418,7 @@ export default function Marketplace() {
         setBusy(false);
       }
     },
-    [loadIssuances]
+    [loadIssuances, chainInfo.usdt]
   );
 
   const claimRevenue = useCallback(
@@ -458,8 +462,8 @@ export default function Marketplace() {
         const signer = await provider.getSigner();
         const amount = parseUnits(usdtAmount, 6);
 
-        // approve USDT to the distributor, then deposit
-        const usdt = new Contract(USDT, ERC20_ABI, signer);
+        // approve USDT to the distributor, then deposit (selected chain's USDT)
+        const usdt = new Contract(chainInfo.usdt, ERC20_ABI, signer);
         const allowance = await usdt.allowance(await signer.getAddress(), iss.distributor);
         if (allowance < amount) {
           const tx = await usdt.approve(iss.distributor, amount);
@@ -478,7 +482,7 @@ export default function Marketplace() {
         setBusy(false);
       }
     },
-    [loadIssuances]
+    [loadIssuances, chainInfo.usdt]
   );
 
   const balanceHint = useCallback(async (iss: Issuance): Promise<string> => {
@@ -503,7 +507,7 @@ export default function Marketplace() {
         <Reveal>
           <p className="vf-eyebrow" style={{ marginBottom: 8 }}>The marketplace</p>
           <h1 className="vf-h2" style={{ marginBottom: 8 }}>
-            Live on {CHAIN_LABEL}
+            Live on {chainInfo.name}
           </h1>
           <p style={{ color: "#9ca3af", maxWidth: 620, lineHeight: 1.7, marginBottom: "1.75rem" }}>
             Every issuance here passed the AI compliance gate. Buy units with USDT, claim
@@ -658,8 +662,8 @@ export default function Marketplace() {
 
       <footer className="vf-footer">
         <div>
-          Veri<span style={{ color: "var(--vf-magenta)" }}>Forge</span> — {CHAIN_LABEL} ·
-          chain {BOT_CHAIN_ID} · AI-gated issuance · revenue claims in USDT · platform holds no funds
+          Veri<span style={{ color: "var(--vf-magenta)" }}>Forge</span> — {chainInfo.name} ·
+          chain {selChain} · {chainInfo.scan} · AI-gated issuance · revenue claims in USDT · platform holds no funds
         </div>
         <div>BOT Chain Builder Challenge #2 · AI × RWA · Deadline Aug 20 2026</div>
       </footer>

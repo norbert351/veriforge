@@ -1,7 +1,9 @@
 # VeriForge — Render blueprint (BOT Chain Builder Challenge #2, AI x RWA).
 # Deploy: Render dashboard > "New +" > "Blueprint" > connect github.com/norbert351/veriforge.
-# Two isolated services (one per app dir, no monorepo build), Bohr testnet (chain 968) defaults.
-# Switch to BOT mainnet (677) by editing the env values, no code change.
+# Dual-chain: BOT mainnet (677) + Bohr testnet (968), mainnet default.
+# The API + web can switch chains at runtime (web toggle passes ?chainId / the
+# x402 gate resolves the chain the buyer paid on). Both chains are hardcoded in
+# src/chains.ts; the env vars below tune the defaults.
 
 services:
   # ---------- API (Fastify, x402 + AI gate + issuance pipeline) ----------
@@ -17,14 +19,24 @@ services:
       - key: NODE_VERSION
         value: '22'
       - key: BOT_CHAIN_ID
-        value: '968'
-      - key: BOT_RPC
+        value: '677'
+      # BOT mainnet (677)
+      - key: BOT_MAINNET_RPC
+        value: https://rpc.botchain.ai
+      - key: BOT_MAINNET_USDT
+        value: '0xaBabc7Ddc03e501d190C676BF3d92ef0e6e87a3C'
+      - key: BOT_MAINNET_BOTSCAN_URL
+        value: https://scan.botchain.ai
+      - key: BOT_MAINNET_BOTSCAN_API
+        value: https://scan.botchain.ai/api
+      # Bohr testnet (968)
+      - key: BOT_TESTNET_RPC
         value: https://rpc.bohr.life
-      - key: BOT_USDT
+      - key: BOT_TESTNET_USDT
         value: '0x75edC9335175Fc0552D51D48439F229c10420fe3'
-      - key: BOTSCAN_URL
+      - key: BOT_TESTNET_BOTSCAN_URL
         value: https://scan.bohr.life
-      - key: BOTSCAN_API
+      - key: BOT_TESTNET_BOTSCAN_API
         value: https://scan.bohr.life/api
       - key: X402_PAY_TO
         value: '0x73b16058d57a6337060677496d4A8e97A9554539'
@@ -36,7 +48,7 @@ services:
       - key: GEMINI_API_KEY
         sync: false
 
-  # ---------- Web (Next.js standalone, proxies /v1/* + /uploads to the API) ----------
+  # ---------- Web (Next.js standalone) — netlify is the live web, this is a fallback ----------
   - type: web
     name: veriforge-web
     runtime: node
@@ -50,16 +62,24 @@ services:
     envVars:
       - key: NODE_VERSION
         value: '22'
-      # Build-time: rewrites() inlines this. Must match the API service URL.
-      - key: API_ORIGIN
-        value: https://veriforge-api.onrender.com
+      # The web calls the API directly (Netlify does not honor Next rewrites).
+      - key: NEXT_PUBLIC_API_URL
+        value: https://veriforge-5w80.onrender.com
+      # BOT mainnet (677) — default network
       - key: NEXT_PUBLIC_BOT_CHAIN_ID
-        value: '968'
-      - key: NEXT_PUBLIC_BOT_RPC
-        value: https://rpc.bohr.life
-      - key: NEXT_PUBLIC_BOTSCAN_URL
-        value: https://scan.bohr.life
+        value: '677'
       - key: NEXT_PUBLIC_BOT_CHAIN_NAME
-        value: Bohr testnet (BOT Chain)
-      - key: NEXT_PUBLIC_USDT
+        value: BOT Chain Mainnet
+      - key: NEXT_PUBLIC_BOT_RPC
+        value: https://rpc.botchain.ai
+      - key: NEXT_PUBLIC_BOT_USDT
+        value: '0xaBabc7Ddc03e501d190C676BF3d92ef0e6e87a3C'
+      - key: NEXT_PUBLIC_BOTSCAN_URL
+        value: https://scan.botchain.ai
+      # Bohr testnet (968) — offered by the toggle
+      - key: NEXT_PUBLIC_BOHR_RPC
+        value: https://rpc.bohr.life
+      - key: NEXT_PUBLIC_BOHR_USDT
         value: '0x75edC9335175Fc0552D51D48439F229c10420fe3'
+      - key: NEXT_PUBLIC_BOHR_BOTSCAN_URL
+        value: https://scan.bohr.life

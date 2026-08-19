@@ -3,30 +3,73 @@
 import { useState } from "react";
 import { useAccount, useSwitchChain } from "wagmi";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-
-const BOT_CHAIN_ID = Number(process.env.NEXT_PUBLIC_BOT_CHAIN_ID || 677);
+import { CHAINS, CHAIN_IDS } from "@/lib/chains";
+import { useChain } from "@/lib/chain-context";
 
 export default function Header({ active }: { active?: "home" | "marketplace" }) {
   const { chainId } = useAccount();
   const { switchChainAsync } = useSwitchChain();
+  const { chainId: selChain, info, switchTo } = useChain();
   const [open, setOpen] = useState(false);
 
-  const switchToBot = async () => {
+  const switchToSelected = async () => {
     try {
-      await switchChainAsync({ chainId: BOT_CHAIN_ID });
+      await switchChainAsync({ chainId: selChain });
     } catch (e: any) {
       if (e?.code === 4902) {
         alert(
-          "BOT Chain not in this wallet. Add it manually: chain " +
-            BOT_CHAIN_ID +
-            ", RPC " +
-            (process.env.NEXT_PUBLIC_BOT_RPC || "https://rpc.botchain.ai")
+          `${info.name} not in this wallet. Add it manually: chain ${selChain}, RPC ${info.rpc}`
         );
       }
     }
   };
 
-  const wrongChain = chainId !== undefined && chainId !== null && chainId !== BOT_CHAIN_ID;
+  const wrongChain = chainId !== undefined && chainId !== null && chainId !== selChain;
+
+  // Segmented Testnet / Mainnet toggle — switches the whole app + wallet chain.
+  const toggle = (
+    <div
+      className="vf-chain-toggle"
+      role="group"
+      aria-label="Network"
+      style={{
+        display: "flex",
+        background: "rgba(255,255,255,0.06)",
+        border: "1px solid #23233a",
+        borderRadius: 999,
+        padding: 3,
+        gap: 2,
+      }}
+    >
+      {CHAIN_IDS.map((id) => {
+        const c = CHAINS[id];
+        const active = id === selChain;
+        return (
+          <button
+            key={id}
+            onClick={() => switchTo(id)}
+            className={active ? "vf-chain-toggle-btn active" : "vf-chain-toggle-btn"}
+            style={{
+              border: "none",
+              background: active ? "var(--vf-magenta)" : "transparent",
+              color: active ? "#fff" : "#9ca3af",
+              borderRadius: 999,
+              padding: "4px 12px",
+              fontSize: "0.72rem",
+              fontWeight: 700,
+              cursor: "pointer",
+              transition: "all 0.15s ease",
+            }}
+            aria-pressed={active}
+            title={c.name}
+          >
+            {c.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+
   const navLink = (href: string, label: string, isActive: boolean) => (
     <a
       href={href}
@@ -57,9 +100,10 @@ export default function Header({ active }: { active?: "home" | "marketplace" }) 
       </nav>
 
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        {toggle}
         {wrongChain && (
-          <button onClick={switchToBot} className="gr-btn gr-btn-outline vf-switch-btn" style={{ padding: "0.5rem 1rem", fontSize: "0.85rem" }}>
-            Switch to BOT Chain
+          <button onClick={switchToSelected} className="gr-btn gr-btn-outline vf-switch-btn" style={{ padding: "0.5rem 1rem", fontSize: "0.85rem" }}>
+            Switch to {info.label}
           </button>
         )}
         <ConnectButton chainStatus="icon" showBalance={false} accountStatus="address" />
@@ -79,11 +123,14 @@ export default function Header({ active }: { active?: "home" | "marketplace" }) 
           {navLink("/#assets", "RWA Assets", false)}
           {navLink("/#how", "How it works", false)}
           {navLink("/marketplace", "Marketplace", active === "marketplace")}
-          {wrongChain && (
-            <button onClick={switchToBot} className="gr-btn gr-btn-outline" style={{ padding: "0.6rem 1rem", fontSize: "0.85rem" }}>
-              Switch to BOT Chain
-            </button>
-          )}
+          <div style={{ display: "flex", gap: 8, alignItems: "center", paddingTop: 4 }}>
+            {toggle}
+            {wrongChain && (
+              <button onClick={switchToSelected} className="gr-btn gr-btn-outline" style={{ padding: "0.5rem 1rem", fontSize: "0.8rem" }}>
+                Switch to {info.label}
+              </button>
+            )}
+          </div>
         </div>
       )}
     </header>

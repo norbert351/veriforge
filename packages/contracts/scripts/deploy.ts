@@ -43,21 +43,26 @@ async function main() {
   const path = require("path");
   const out = path.join(__dirname, "../../shared/contract-addresses.json");
   fs.mkdirSync(path.dirname(out), { recursive: true });
-  fs.writeFileSync(
-    out,
-    JSON.stringify(
-      {
-        chainId: Number((await ethers.provider.getNetwork()).chainId),
-        attestationRegistry: attestationsAddr,
-        issuanceRegistry: issuancesAddr,
-        verifier,
-        deployedAt: new Date().toISOString(),
-      },
-      null,
-      2
-    )
-  );
-  console.log("Addresses written to", out);
+
+  const chainId = Number((await ethers.provider.getNetwork()).chainId);
+  // Read existing file (keyed by chainId) and patch just this chain in, so
+  // one deploy doesn't clobber the other chain's addresses.
+  let data: Record<string, any> = {};
+  try {
+    const existing = JSON.parse(fs.readFileSync(out, "utf8"));
+    if (existing) data = existing;
+  } catch {
+    // new file
+  }
+  data[String(chainId)] = {
+    chainId,
+    attestationRegistry: attestationsAddr,
+    issuanceRegistry: issuancesAddr,
+    verifier,
+    deployedAt: new Date().toISOString(),
+  };
+  fs.writeFileSync(out, JSON.stringify(data, null, 2));
+  console.log("Addresses written to", out, "for chain", chainId);
 }
 
 main().catch((e) => {

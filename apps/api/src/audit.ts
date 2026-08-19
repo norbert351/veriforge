@@ -3,9 +3,11 @@
 // Never fabricates data: every finding is backed by an RPC or explorer read.
 
 import { ethers } from "ethers";
+import { CHAINS, DEFAULT_CHAIN_ID, getChainInfo } from "./chains.js";
 
+// Backwards-compatible exports (defaults to the BOT mainnet facts).
 export const BOT_RPC = process.env.BOT_RPC || "https://rpc.botchain.ai";
-export const BOT_CHAIN_ID = Number(process.env.BOT_CHAIN_ID || 677);
+export const BOT_CHAIN_ID = DEFAULT_CHAIN_ID;
 export const BOT_USDT = process.env.BOT_USDT || "0xaBabc7Ddc03e501d190C676BF3d92ef0e6e87a3C";
 export const BOTSCAN_API = process.env.BOTSCAN_API || "https://scan.botchain.ai/api";
 
@@ -35,8 +37,9 @@ const ABI_PAUSED = ["function paused() view returns (bool)"];
 const ABI_TOTAL_SUPPLY = ["function totalSupply() view returns (uint256)"];
 const ABI_MINT = ["function mint(address,uint256)"];
 
-export function getProvider(): ethers.JsonRpcProvider {
-  return new ethers.JsonRpcProvider(BOT_RPC, BOT_CHAIN_ID, { staticNetwork: true });
+export function getProvider(chainId?: number): ethers.JsonRpcProvider {
+  const info = getChainInfo(chainId ?? DEFAULT_CHAIN_ID);
+  return new ethers.JsonRpcProvider(info.rpc, info.id, { staticNetwork: true });
 }
 
 function isZeroAddr(a: string): boolean {

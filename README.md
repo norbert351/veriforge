@@ -96,17 +96,23 @@ npx hardhat run scripts/deploy.ts --network botchain-testnet
 npx hardhat run scripts/deploy.ts --network botchain
 ```
 
-## Live on Bohr testnet (verified 2026-08-14)
+## Live deployments (verified 2026-08-19)
 
+### BOT mainnet (chain 677) — live
+- RPC `https://rpc.botchain.ai`, chain 677, explorer `https://scan.botchain.ai`
+- USDT: `0xaBabc7Ddc03e501d190C676BF3d92ef0e6e87a3C`
+- AttestationRegistry: `0xF7ed39F4401062d9A5c45B7583d299887c5Cd560` ([verified source](https://scan.botchain.ai/address/0xF7ed39F4401062d9A5c45B7583d299887c5Cd560#code))
+- IssuanceRegistry: `0x9369c520DcE7DA60aB9B0EafcD618d8F3416ae65` ([verified source](https://scan.botchain.ai/address/0x9369c520DcE7DA60aB9B0EafcD618d8F3416ae65#code))
+
+### Bohr testnet (chain 968) — live
 - RPC `https://rpc.bohr.life`, chain 968, explorer `https://scan.bohr.life`
 - USDT: `0x75edC9335175Fc0552D51D48439F229c10420fe3` (faucet: `https://faucet.botchain.ai/basic`)
 - AttestationRegistry: `0x569ab13814bb10A0E661a1993c6372b40eEab57d` ([verified source](https://scan.bohr.life/address/0x569ab13814bb10A0E661a1993c6372b40eEab57d#code))
 - IssuanceRegistry: `0x2011C677a4EF5859975c54E593252a7b868a7269` ([verified source](https://scan.bohr.life/address/0x2011C677a4EF5859975c54E593252a7b868a7269#code))
-- Live issuances and their tokens/distributors are listed by `GET /v1/issuances` — see the marketplace.
 
-Full e2e loop executed on Bohr: x402 pay (1 USDT) → AI gate (score 90, APPROVED) → deploy → list → buy units for USDT → issuer deposits revenue → holder claims. All steps confirmed on-chain.
+Both chains share the deployer/verifier wallet `0x73b16058d57a6337060677496d4A8e97A9554539`. Live issuances per chain are listed by `GET /v1/issuances?chainId=<id>` — **the web has a Testnet/Mainnet toggle in the header** that switches the whole app (wallet network, reads, x402 payments) between 677 and 968.
 
-The stack is env-driven for either chain: `BOT_CHAIN_ID`, `BOT_RPC`, `BOT_USDT`, `X402_PAY_TO`, `BOTSCAN_URL` in `apps/api/.env`.
+Full e2e loop executed on Bohr: x402 pay (1 USDT) → AI gate → deploy → list → buy units for USDT → issuer deposits revenue → holder claims. The same pipeline runs on mainnet once the buyer pays the x402 fee on chain 677.
 
 ## Official BOT Chain integration
 
@@ -124,7 +130,7 @@ Verified against the [BOT Chain Project Integration Guide](https://dev-docs.botc
 
 **Official contracts (per the guide):** WBOT `0xD5452816194a3784dBa983426cCe7c122F4abd30` · mainnet USDT `0xaBabc7Ddc03e501d190C676BF3d92ef0e6e87a3C` · BDEX Universal Router mainnet `0xaE6ae8630f7A888dEc0B9195C85F7515d5887655` / testnet `0x73Be0A1d8011B335A7aBeF6c45544E8ca4448AB5` · ERC-4337 bundler mainnet `https://bundler.botchain.ai/rpc` / testnet `https://bundler.bohr.life/rpc` · live BOT price `https://api.coinstore.com/api/v1/ticker/price;symbol=BOTUSDT`.
 
-**Mainnet readiness:** set `BOT_CHAIN_ID=677`, `BOT_RPC=https://rpc.botchain.ai`, `BOT_USDT=0xaBabc7Ddc03e501d190C676BF3d92ef0e6e87a3C`, `BOTSCAN_URL=https://scan.botchain.ai` (API env) and the matching `NEXT_PUBLIC_*` values (web build env), then deploy the registry pair with `npx hardhat run scripts/deploy.ts --network botchain`. No code change.
+**Dual-chain:** the API serves both chains (`chainId=677|968` query param; the x402 gate resolves the chain the buyer pays on). The web toggle switches networks at runtime — no redeploy needed to change network. Chain config lives in `apps/api/src/chains.ts` and `apps/web/src/lib/chains.ts` (per-chain RPC/USDT/explorer hardcoded, overridable via `BOT_MAINNET_*` / `BOT_TESTNET_*` env).
 
 ## Web
 
