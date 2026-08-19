@@ -27,6 +27,7 @@ export default function Header({ active }: { active?: "home" | "marketplace" }) 
   const wrongChain = chainId !== undefined && chainId !== null && chainId !== selChain;
 
   // Segmented Testnet / Mainnet toggle — switches the whole app + wallet chain.
+  // Hidden from the top bar on mobile (see CSS); shown inside the menu instead.
   const toggle = (
     <div
       className="vf-chain-toggle"
@@ -75,7 +76,7 @@ export default function Header({ active }: { active?: "home" | "marketplace" }) 
       href={href}
       className="gr-link"
       style={{
-        fontSize: "0.9rem",
+        fontSize: "0.95rem",
         color: isActive ? "var(--vf-magenta)" : undefined,
         fontWeight: isActive ? 700 : undefined,
       }}
@@ -86,8 +87,12 @@ export default function Header({ active }: { active?: "home" | "marketplace" }) 
 
   return (
     <header className="vf-header">
-      <a href="/" style={{ display: "flex", alignItems: "center", textDecoration: "none", color: "inherit" }}>
-        <div style={{ fontSize: "1.3rem", fontWeight: 800, letterSpacing: "-0.02em" }}>
+      <a
+        href="/"
+        className="vf-logo"
+        style={{ display: "flex", alignItems: "center", textDecoration: "none", color: "inherit" }}
+      >
+        <div style={{ fontSize: "1.3rem", fontWeight: 800, letterSpacing: "-0.02em", whiteSpace: "nowrap" }}>
           Veri<span style={{ color: "var(--vf-magenta)" }}>Forge</span>
         </div>
       </a>
@@ -99,34 +104,47 @@ export default function Header({ active }: { active?: "home" | "marketplace" }) 
         {navLink("/marketplace", "Marketplace", active === "marketplace")}
       </nav>
 
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        {toggle}
+      <div className="vf-header-actions">
+        <div className="vf-header-toggle">{toggle}</div>
         {wrongChain && (
-          <button onClick={switchToSelected} className="gr-btn gr-btn-outline vf-switch-btn" style={{ padding: "0.5rem 1rem", fontSize: "0.85rem" }}>
+          <button
+            onClick={switchToSelected}
+            className="gr-btn gr-btn-outline vf-switch-btn"
+            style={{ padding: "0.5rem 1rem", fontSize: "0.85rem", whiteSpace: "nowrap" }}
+          >
             Switch to {info.label}
           </button>
         )}
         <ConnectButton chainStatus="icon" showBalance={false} accountStatus="address" />
         <button
-          className="vf-burger"
+          className={open ? "vf-burger open" : "vf-burger"}
           onClick={() => setOpen(!open)}
-          aria-label="Menu"
+          aria-label={open ? "Close menu" : "Open menu"}
           aria-expanded={open}
+          aria-controls="vf-mobile-menu"
         >
-          {open ? "✕" : "☰"}
+          <span className="vf-burger-box" aria-hidden="true">
+            <span></span>
+            <span></span>
+            <span></span>
+          </span>
         </button>
       </div>
 
       {open && (
-        <div className="vf-mobile-menu">
+        <div className="vf-mobile-menu" id="vf-mobile-menu">
           {navLink("/", "Home", active === "home")}
           {navLink("/#assets", "RWA Assets", false)}
           {navLink("/#how", "How it works", false)}
           {navLink("/marketplace", "Marketplace", active === "marketplace")}
-          <div style={{ display: "flex", gap: 8, alignItems: "center", paddingTop: 4 }}>
+          <div className="vf-mobile-menu-actions">
             {toggle}
             {wrongChain && (
-              <button onClick={switchToSelected} className="gr-btn gr-btn-outline" style={{ padding: "0.5rem 1rem", fontSize: "0.8rem" }}>
+              <button
+                onClick={switchToSelected}
+                className="gr-btn gr-btn-outline"
+                style={{ padding: "0.5rem 1rem", fontSize: "0.8rem", whiteSpace: "nowrap" }}
+              >
                 Switch to {info.label}
               </button>
             )}
