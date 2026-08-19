@@ -65,18 +65,18 @@ services:
       # The web calls the API directly (Netlify does not honor Next rewrites).
       - key: NEXT_PUBLIC_API_URL
         value: https://veriforge-5w80.onrender.com
-      # BOT mainnet (677) — default network
-      - key: NEXT_PUBLIC_BOT_CHAIN_ID
-        value: '677'
-      - key: NEXT_PUBLIC_BOT_CHAIN_NAME
+      # BOT mainnet (677) — default network (dedicated env names)
+      - key: NEXT_PUBLIC_BOT_MAINNET_NAME
         value: BOT Chain Mainnet
-      - key: NEXT_PUBLIC_BOT_RPC
+      - key: NEXT_PUBLIC_BOT_MAINNET_RPC
         value: https://rpc.botchain.ai
-      - key: NEXT_PUBLIC_BOT_USDT
+      - key: NEXT_PUBLIC_BOT_MAINNET_USDT
         value: '0xaBabc7Ddc03e501d190C676BF3d92ef0e6e87a3C'
-      - key: NEXT_PUBLIC_BOTSCAN_URL
+      - key: NEXT_PUBLIC_BOT_MAINNET_BOTSCAN_URL
         value: https://scan.botchain.ai
       # Bohr testnet (968) — offered by the toggle
+      - key: NEXT_PUBLIC_BOHR_NAME
+        value: BOT Chain Testnet (Bohr)
       - key: NEXT_PUBLIC_BOHR_RPC
         value: https://rpc.bohr.life
       - key: NEXT_PUBLIC_BOHR_USDT
