@@ -92,6 +92,11 @@ export default function Header({ active }: { active?: "home" | "marketplace" }) 
         className="vf-logo"
         style={{ display: "flex", alignItems: "center", textDecoration: "none", color: "inherit" }}
       >
+        <img
+          src="/logo.jpg"
+          alt="VeriForge"
+          style={{ width: 34, height: 34, borderRadius: 9, objectFit: "cover", marginRight: 9, border: "1px solid #2a2a44" }}
+        />
         <div style={{ fontSize: "1.3rem", fontWeight: 800, letterSpacing: "-0.02em", whiteSpace: "nowrap" }}>
           Veri<span style={{ color: "var(--vf-magenta)" }}>Forge</span>
         </div>
