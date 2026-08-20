@@ -114,8 +114,10 @@ Terms: 100,000 units at 10 USDT each. Quarterly distributions, buyback at assay 
   console.log("3. probe status:", probe.status);
   const challengeB64 = probe.headers.get("payment-required") || "";
   const challenge = JSON.parse(Buffer.from(challengeB64, "base64").toString());
-  const accepted = challenge.accepts[0];
-  console.log("   challenge amount:", accepted.amount, "payTo:", accepted.payTo);
+  // Select the accepted entry for the TARGET chain (968 Bohr), not the first,
+  // so testnet runs settle on testnet where the funds actually live.
+  const accepted = challenge.accepts.find((a) => Number(a.chainId) === CHAIN_ID) || challenge.accepts[0];
+  console.log("   challenge amount:", accepted.amount, "payTo:", accepted.payTo, "chainId:", accepted.chainId);
 
   // payer = investor sends exact USDT
   const amount = BigInt(accepted.amount);
