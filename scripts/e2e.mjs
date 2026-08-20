@@ -223,6 +223,54 @@ Terms: 100,000 units at 10 USDT each. Quarterly distributions, buyback at assay 
   const balUsdt = await usdt.balanceOf(investor.address);
   console.log("11. investor claimed tx:", claimR.hash, "USDT bal now:", ethers.formatUnits(balUsdt, 6));
 
+  // ── SECONDARY MARKET: investors earn from price appreciation too ──
+  const marketAddr = data.onChain.market;
+  if (marketAddr) {
+    const mktAbi = [
+      "function seed(uint256,uint256)",
+      "function buy(uint256) returns (uint256)",
+      "function sell(uint256) returns (uint256)",
+      "function price() view returns (uint256)",
+      "function reserveToken() view returns (uint256)",
+      "function reserveUsdt() view returns (uint256)",
+    ];
+    const market = new ethers.Contract(marketAddr, mktAbi, issuer);
+    const erc20Approve = ["function approve(address,uint256)"];
+
+    // 12. Issuer buys a few PRIMARY units (as the issuer wallet) so they hold
+    //     tokens to seed the secondary pool, then seeds it with units + USDT.
+    const tokenIss = new ethers.Contract(tokenAddr, ["function buy(uint256) returns (uint256)"], issuer);
+    const seedUnits = ethers.parseUnits("5", 18);   // 5 units
+    const seedUsd = ethers.parseUnits("50", 6);     // 50 USDT -> $10/unit start
+    await sendWithRetry((o) => new ethers.Contract(USDT, erc20Approve, issuer).approve(tokenAddr, seedUsd, o)).then((t) => t.wait());
+    await sendWithRetry((o) => tokenIss.buy(seedUsd, o)).then((t) => t.wait());
+    await sendWithRetry((o) => new ethers.Contract(tokenAddr, erc20Approve, issuer).approve(marketAddr, seedUnits, o)).then((t) => t.wait());
+    await sendWithRetry((o) => new ethers.Contract(USDT, erc20Approve, issuer).approve(marketAddr, seedUsd, o)).then((t) => t.wait());
+    await sendWithRetry((o) => market.seed(seedUnits, seedUsd, o)).then((t) => t.wait());
+    const p0 = await market.price();
+    console.log("12. market seeded. start price:", ethers.formatUnits(p0, 6), "USDT/unit");
+
+    // 13. investor buys on the market -> price must rise
+    const mktInv = market.connect(investor);
+    await new ethers.Contract(USDT, erc20Approve, investor)
+      .approve(marketAddr, ethers.parseUnits("10", 6), { nonce: invNonce++ }).then((t) => t.wait());
+    await mktInv.buy(ethers.parseUnits("10", 6), { nonce: invNonce++ }).then((t) => t.wait());
+    const p1 = await market.price();
+    console.log("13. investor bought on market. price now:", ethers.formatUnits(p1, 6), "USDT/unit", p1 > p0 ? "(UP ✓)" : "(not up)");
+
+    // 14. partially sell back -> real exit + price-aware
+    const sellQty = ethers.parseUnits("2", 18);
+    await new ethers.Contract(tokenAddr, erc20Approve, investor)
+      .approve(marketAddr, sellQty, { nonce: invNonce++ }).then((t) => t.wait());
+    await mktInv.sell(sellQty, { nonce: invNonce++ }).then((t) => t.wait());
+    const p2 = await market.price();
+    console.log("14. investor sold 2 units back. price now:", ethers.formatUnits(p2, 6), p2 < p1 ? "(DOWN after sell ✓)" : "(flat)");
+
+    console.log("   market:", marketAddr);
+  } else {
+    console.log("12-14. SKIPPED: no secondary market on this issuance (redeploy to include it)");
+  }
+
   console.log("\nFULL LOOP OK");
 }
 

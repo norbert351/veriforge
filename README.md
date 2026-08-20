@@ -145,15 +145,38 @@ Next.js 15 + RainbowKit (wagmi v2) wallet model. BOT Chain 968/677 is a first-cl
 | Deposit revenue | Market tab, issuer row |
 | Claim pro-rata share | Market tab, holder row |
 
+## Secondary market — investors earn two ways (shipped)
+
+Each issuance now deploys a per-asset **SecondaryMarket** (a constant-product
+liquidity pool) alongside its token and revenue distributor, so units trade at
+a **demand-driven market price** on top of the fixed primary issuance:
+
+- **Price appreciation** — buying demand pushes the unit price up, so early
+  investors can sell at a gain.
+- **Two independent earnings rails** — revenue yield (via `RevenueDistributor`)
+  **plus** capital appreciation, decoupled from each other.
+- **How it works** — the issuer seeds the pool (token units + USDT) to set the
+  start price; then anyone can **Buy** or **Sell** at the live price. The
+  constant-product curve means buys raise the price and sells lower it —
+  a real market, not a fixed price.
+- **Trade UI** — each card shows the live price and a Buy/Sell control (issuer
+  sees a Seed control until the pool is seeded).
+- Contract: `SecondaryMarket.sol` (33 contract tests passing, incl. the
+  demand-driven price tests).
+
+Design goal met: the clean primary raise (payment to issuer) is unchanged; the
+market sits on top, so investors earn from **both** project revenue and price
+increase.
+
 ## Roadmap
 
-VeriForge ships the issuance rail today. Two upgrades are next — both keep the
-"platform holds no funds" and "AI-gated, on-chain" guarantees at the center:
+VeriForge ships the issuance rail and the secondary market today. The next
+upgrade keeps the "platform holds no funds" and "AI-gated, on-chain"
+guarantees at the center:
 
-### 1. Automated revenue verification & distribution
-Today revenue is reported by the issuer (`RevenueDistributor.deposit()`, now
-`onlyIssuer`-gated) and claimed pro-rata by holders. The roadmap moves revenue
-from *self-reported* to *verifiable*:
+### 2. Automated revenue verification & distribution
+The secondary market is shipped. Next, revenue moves from *self-reported* to
+*verifiable*:
 
 - **Revenue oracle / verification rail** — cross-check the issuer's declared
   revenue against a live data source (invoicing, payment-settlement, or a
@@ -164,21 +187,6 @@ from *self-reported* to *verifiable*:
   issuer-deposit step for qualifying issuers.
 - **Vested / escrowed revenue** — enabled for issuers who want provable custody
   of declared earnings.
-
-### 2. Secondary market — investors earn two ways
-Add a per-issuance secondary market on top of the existing fixed primary
-issuance, so token units become **tradeable at a demand-driven price**:
-
-- **Price appreciation** — buying demand pushes the unit price up, so early
-  investors can sell at a gain.
-- **Two independent earnings rails** — revenue yield (via `RevenueDistributor`)
-  **plus** capital appreciation, decoupled from each other.
-- **Trade UI** — a Trade view on each issuance card (buy/sell at market price,
-  with order-book-style transparency) alongside the existing Buy / Claim flows.
-
-Design goal: keep the clean primary raise (payment to issuer) unchanged and add
-the market on top, so investors earn from both project revenue and price
-increase without altering the fixed launch economics.
 
 ## BOT Chain facts
 

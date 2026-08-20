@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { BrowserProvider, Contract, parseUnits, formatUnits } from "ethers";
+import { BrowserProvider, Contract, JsonRpcProvider, parseUnits, formatUnits } from "ethers";
 import { useAccount } from "wagmi";
 import Header from "@/components/Header";
 import Reveal from "@/components/Reveal";
@@ -17,6 +17,7 @@ interface Issuance {
   issuer: string;
   token: string;
   distributor: string;
+  market?: string | null;
   name: string;
   symbol: string;
   pricePerTokenUsdt: string;
@@ -51,6 +52,14 @@ const RWATOKEN_ABI = [
   "function pricePerToken() view returns (uint256)",
 ];
 const DISTRIBUTOR_ABI = ["function claim() returns (uint256)", "function claimable(address) view returns (uint256)", "function deposit(uint256)"];
+const MARKET_ABI = [
+  "function seed(uint256,uint256)",
+  "function buy(uint256) returns (uint256)",
+  "function sell(uint256) returns (uint256)",
+  "function price() view returns (uint256)",
+  "function reserveToken() view returns (uint256)",
+  "function reserveUsdt() view returns (uint256)",
+];
 const ERC20_ABI = ["function approve(address,uint256)", "function allowance(address,address) view returns (uint256)", "function transfer(address,uint256)"];
 
 // EIP-712 domain/types for x402 exact-scheme signing (mirrors the API gate).
@@ -423,6 +432,128 @@ export default function Marketplace() {
     [loadIssuances, chainInfo.usdt]
   );
 
+  // Live secondary-market price for a given issuance (or null if unseeded).
+  const loadMarketPrice = useCallback(
+    async (iss: Issuance): Promise<string | null> => {
+      if (!iss.market) return null;
+      try {
+        const eth = getEth();
+        const provider = eth
+          ? new BrowserProvider(eth)
+          : new JsonRpcProvider(chainInfo.rpc);
+        const market = new Contract(iss.market, MARKET_ABI, provider);
+        const price = await market.price();
+        return price > 0n ? formatUnits(price, 6) : null;
+      } catch {
+        return null;
+      }
+    },
+    [chainInfo.rpc]
+  );
+
+  // Trade on the secondary market: buy units at the live (demand-driven) price.
+  const tradeBuy = useCallback(
+    async (iss: Issuance, usdtAmount: string) => {
+      const eth = getEth();
+      if (!eth || !iss.market) {
+        setError("Connect wallet first (or this issuance has no secondary market)");
+        return;
+      }
+      setBusy(true); setError(""); setNotice("");
+      try {
+        const provider = new BrowserProvider(eth);
+        const signer = await provider.getSigner();
+        const amount = parseUnits(usdtAmount, 6);
+        const usdt = new Contract(chainInfo.usdt, ERC20_ABI, signer);
+        const allowance = await usdt.allowance(await signer.getAddress(), iss.market);
+        if (allowance < amount) {
+          const tx = await usdt.approve(iss.market, amount);
+          await tx.wait();
+          setNotice("USDT approved. Confirm the market buy.");
+        }
+        const market = new Contract(iss.market, MARKET_ABI, signer);
+        const tx = await market.buy(amount);
+        await tx.wait();
+        setNotice(`Traded ${usdtAmount} USDT on the ${iss.symbol} market at the live price.`);
+        loadIssuances();
+      } catch (e: any) {
+        setError(e?.reason || e?.shortMessage || e?.message || "Market buy failed");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [loadIssuances, chainInfo.usdt]
+  );
+
+  // Trade on the secondary market: sell units back for USDT.
+  const tradeSell = useCallback(
+    async (iss: Issuance, tokenAmount: string) => {
+      const eth = getEth();
+      if (!eth || !iss.market) {
+        setError("Connect wallet first (or this issuance has no secondary market)");
+        return;
+      }
+      setBusy(true); setError(""); setNotice("");
+      try {
+        const provider = new BrowserProvider(eth);
+        const signer = await provider.getSigner();
+        const amount = parseUnits(tokenAmount, 18);
+        const tokenContract = new Contract(iss.token, ERC20_ABI, signer);
+        const cur = await tokenContract.allowance(await signer.getAddress(), iss.market);
+        if (cur < amount) {
+          const tx = await tokenContract.approve(iss.market, amount);
+          await tx.wait();
+          setNotice("Units approved. Confirm the market sell.");
+        }
+        const market = new Contract(iss.market, MARKET_ABI, signer);
+        const tx = await market.sell(amount);
+        await tx.wait();
+        setNotice(`Sold ${tokenAmount} ${iss.symbol} on the market for USDT.`);
+        loadIssuances();
+      } catch (e: any) {
+        setError(e?.reason || e?.shortMessage || e?.message || "Market sell failed");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [loadIssuances]
+  );
+
+  // Issuer seeds the per-issuance liquidity pool (token + USDT).
+  const seedMarket = useCallback(
+    async (iss: Issuance, tokenAmount: string, usdtAmount: string) => {
+      const eth = getEth();
+      if (!eth || !iss.market) {
+        setError("Connect wallet first (or this issuance has no secondary market)");
+        return;
+      }
+      setBusy(true); setError(""); setNotice("");
+      try {
+        const provider = new BrowserProvider(eth);
+        const signer = await provider.getSigner();
+        const tokenAmt = parseUnits(tokenAmount, 18);
+        const usdtAmt = parseUnits(usdtAmount, 6);
+        const token = new Contract(iss.token, ERC20_ABI, signer);
+        const usdt = new Contract(chainInfo.usdt, ERC20_ABI, signer);
+        const tokAllow = await token.allowance(await signer.getAddress(), iss.market);
+        if (tokAllow < tokenAmt) { const t = await token.approve(iss.market, tokenAmt); await t.wait(); }
+        const usdAllow = await usdt.allowance(await signer.getAddress(), iss.market);
+        if (usdAllow < usdtAmt) { const t = await usdt.approve(iss.market, usdtAmt); await t.wait(); }
+        setNotice("Seed approved. Confirm the liquidity transaction.");
+        const market = new Contract(iss.market, MARKET_ABI, signer);
+        const tx = await market.seed(tokenAmt, usdtAmt);
+        await tx.wait();
+        setNotice(`Secondary market seeded for ${iss.symbol}. Units now trade at a live price.`);
+        loadIssuances();
+      } catch (e: any) {
+        setError(e?.reason || e?.shortMessage || e?.message || "Seeding failed");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [loadIssuances, chainInfo.usdt]
+  );
+
   const claimRevenue = useCallback(
     async (iss: Issuance) => {
       const eth = getEth();
@@ -655,7 +786,11 @@ export default function Marketplace() {
                   onBuy={(amt) => buyUnits(iss, amt)}
                   onClaim={() => claimRevenue(iss)}
                   onDeposit={(amt) => depositRevenue(iss, amt)}
+                  onTradeBuy={(amt) => tradeBuy(iss, amt)}
+                  onTradeSell={(amt) => tradeSell(iss, amt)}
+                  onSeed={(t, u) => seedMarket(iss, t, u)}
                   balanceHint={balanceHint}
+                  loadMarketPrice={loadMarketPrice}
                 />
               ))}
             </div>
@@ -681,7 +816,11 @@ function IssuanceCard({
   onBuy,
   onClaim,
   onDeposit,
+  onTradeBuy,
+  onTradeSell,
+  onSeed,
   balanceHint,
+  loadMarketPrice,
 }: {
   iss: Issuance;
   connectedAddress?: `0x${string}`;
@@ -689,11 +828,20 @@ function IssuanceCard({
   onBuy: (amt: string) => void;
   onClaim: () => void;
   onDeposit: (amt: string) => void;
+  onTradeBuy: (amt: string) => void;
+  onTradeSell: (amt: string) => void;
+  onSeed: (token: string, usdt: string) => void;
   balanceHint: (iss: Issuance) => Promise<string>;
+  loadMarketPrice: (iss: Issuance) => Promise<string | null>;
 }) {
   const [amount, setAmount] = useState("10");
   const [depositAmt, setDepositAmt] = useState("50");
   const [units, setUnits] = useState("");
+  const [tradeAmt, setTradeAmt] = useState("10");
+  const [sellAmt, setSellAmt] = useState("");
+  const [seedTok, setSeedTok] = useState("");
+  const [seedUsd, setSeedUsd] = useState("");
+  const [marketPrice, setMarketPrice] = useState<string | null>(null);
 
   // Only the declared on-chain issuer controls the revenue deposit row.
   const isIssuer =
@@ -711,6 +859,17 @@ function IssuanceCard({
       live = false;
     };
   }, [iss, balanceHint]);
+
+  // Load the live secondary-market price for this issuance.
+  useEffect(() => {
+    let live = true;
+    if (iss.market) {
+      loadMarketPrice(iss).then((p) => live && setMarketPrice(p));
+    }
+    return () => {
+      live = false;
+    };
+  }, [iss, loadMarketPrice]);
 
   const price = parseFloat(iss.pricePerTokenUsdt);
 
@@ -792,6 +951,49 @@ function IssuanceCard({
           </>
         ) : (
           <span style={{ fontSize: "0.72rem", color: "#4b5563" }}>· issuer-only control</span>
+        )}
+      </div>
+
+      {/* Secondary market — investors earn from price appreciation too */}
+      <div className="vf-row" style={{ marginTop: 12, paddingTop: 12, borderTop: "1px dashed #2c2c47", flexDirection: "column", alignItems: "stretch", gap: 8 }}>
+        <div className="vf-row" style={{ alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: "0.78rem", fontWeight: 700, color: "#c4b5fd" }}>Secondary market</span>
+          {marketPrice !== null ? (
+            <span style={{ fontSize: "0.78rem", color: "#10b981" }}>
+              · live price ${Number(marketPrice).toFixed(2)} /unit
+            </span>
+          ) : (
+            <span style={{ fontSize: "0.72rem", color: "#6b7280" }}>
+              · {iss.market ? "pool not seeded yet" : "no market"}
+            </span>
+          )}
+        </div>
+        {iss.market && (
+          <>
+            {isIssuer && marketPrice === null && (
+              <div className="vf-row" style={{ gap: 8, flexWrap: "wrap" }}>
+                <span style={{ fontSize: "0.72rem", color: "#9ca3af" }}>Seed liquidity ·</span>
+                <input value={seedTok} onChange={(e) => setSeedTok(e.target.value)} type="number" step="0.1" min="0" placeholder="units" style={{ ...inputStyle, maxWidth: 100, flexBasis: 80 }} />
+                <input value={seedUsd} onChange={(e) => setSeedUsd(e.target.value)} type="number" step="1" min="0" placeholder="USDT" style={{ ...inputStyle, maxWidth: 100, flexBasis: 80 }} />
+                <button onClick={() => onSeed(seedTok, seedUsd)} style={btnStyle({ outline: true })}>
+                  Seed
+                </button>
+              </div>
+            )}
+            <div className="vf-row" style={{ gap: 8, flexWrap: "wrap" }}>
+              <input value={tradeAmt} onChange={(e) => setTradeAmt(e.target.value)} type="number" step="0.01" min="0" style={{ ...inputStyle, maxWidth: 110, flexBasis: 90 }} />
+              <span style={{ fontSize: "0.8rem", color: "#9ca3af" }}>USDT</span>
+              <button onClick={() => onTradeBuy(tradeAmt)} style={btnStyle({})}>
+                Buy
+              </button>
+              <span style={{ fontSize: "0.72rem", color: "#6b7280" }}>at market</span>
+              <input value={sellAmt} onChange={(e) => setSellAmt(e.target.value)} type="number" step="0.1" min="0" placeholder="units" style={{ ...inputStyle, maxWidth: 90, flexBasis: 70 }} />
+              <button onClick={() => onTradeSell(sellAmt)} style={btnStyle({ outline: true })}>
+                Sell
+              </button>
+              <span style={{ fontSize: "0.72rem", color: "#6b7280" }}>→ price moves with demand</span>
+            </div>
+          </>
         )}
       </div>
     </div>

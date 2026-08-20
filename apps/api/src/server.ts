@@ -93,6 +93,7 @@ const RWATOKEN_ABI = [
   "function name() view returns (string)",
   "function symbol() view returns (string)",
   "function totalSupply() view returns (uint256)",
+  "function secondaryMarket() view returns (address)",
 ];
 
 const DISTRIBUTOR_ABI = [
@@ -114,6 +115,18 @@ function loadArtifact(name: string): { abi: any[]; bytecode: string } {
 
 const RWATOKEN_ARTIFACT = loadArtifact("RwaToken");
 const DISTRIBUTOR_ARTIFACT = loadArtifact("RevenueDistributor");
+const MARKET_ARTIFACT = loadArtifact("SecondaryMarket");
+
+const SEC_MARKET_ABI = [
+  "function price() view returns (uint256)",
+  "function reserveToken() view returns (uint256)",
+  "function reserveUsdt() view returns (uint256)",
+  "function issuer() view returns (address)",
+  "function quoteTokenOut(uint256) view returns (uint256)",
+  "function quoteUsdtOut(uint256) view returns (uint256)",
+  "function buy(uint256) returns (uint256)",
+  "function sell(uint256) returns (uint256)",
+];
 
 function getVerifierWallet(chainId: number) {
   const key = process.env.VERIFIER_PRIVATE_KEY || "";
@@ -217,6 +230,41 @@ app.get("/v1/issuances/:id/claimable/:holder", async (req, reply) => {
       distributor: issuance.distributor,
       claimable_usdt: ethers.formatUnits(claimable, 6),
       claimable_raw: claimable.toString(),
+    };
+  } catch {
+    return reply.status(404).send({ error: "not_found", message: "No such issuance" });
+  }
+});
+
+// Secondary-market quote + state for a live price display.
+app.get("/v1/issuances/:id/market", async (req, reply) => {
+  const { id } = req.params as { id: string };
+  const chainId = chainFromReq(req);
+  const cfg = loadContractAddresses(chainId);
+  if (!cfg) return reply.status(503).send({ error: "not_deployed", message: `Registry not deployed on chain ${chainId} yet` });
+  const provider = getProvider(chainId);
+  const registry = new ethers.Contract(cfg.issuanceRegistry, ISSUANCE_ABI, provider);
+  try {
+    const issuance = await registry.getIssuance(Number(id));
+    const token = new ethers.Contract(issuance.token, ["function secondaryMarket() view returns (address)"], provider);
+    const marketAddr = (await token.secondaryMarket().catch(() => ethers.ZeroAddress)) as string;
+    const info = getChainInfo(chainId);
+    if (!marketAddr || marketAddr === ethers.ZeroAddress) {
+      return { issuance_id: Number(issuance.id), market: null, explorer: `${info.scan}/address/${issuance.token}` };
+    }
+    const market = new ethers.Contract(marketAddr, SEC_MARKET_ABI, provider);
+    const [price, reserveToken, reserveUsdt] = await Promise.all([
+      market.price().catch(() => 0n),
+      market.reserveToken().catch(() => 0n),
+      market.reserveUsdt().catch(() => 0n),
+    ]);
+    return {
+      issuance_id: Number(issuance.id),
+      market: marketAddr,
+      price_usdt: ethers.formatUnits(price, 6),
+      reserve_token: ethers.formatUnits(reserveToken as bigint, 18),
+      reserve_usdt: ethers.formatUnits(reserveUsdt as bigint, 6),
+      explorer: `${info.scan}/address/${marketAddr}`,
     };
   } catch {
     return reply.status(404).send({ error: "not_found", message: "No such issuance" });
@@ -497,6 +545,20 @@ app.post("/v1/issuances", { preHandler: x402Gate }, async (req, reply) => {
         const distributorAddr = await distributor.getAddress();
         app.log.info(`[chain ${chainId}] RevenueDistributor deployed: ${distributorAddr}`);
 
+        // 3b2. Deploy SecondaryMarket — a per-issuance liquidity pool so units
+        //       trade at a demand-driven price (investors earn two ways).
+        const marketFactory = new ethers.ContractFactory(MARKET_ARTIFACT.abi, MARKET_ARTIFACT.bytecode, wallet);
+        const market = await marketFactory.deploy(tokenAddr, usdt, issuerAddress, { nonce: await nextNonce() });
+        await market.waitForDeployment();
+        const marketAddr = await market.getAddress();
+        app.log.info(`[chain ${chainId}] SecondaryMarket deployed: ${marketAddr}`);
+
+        // 3b3. Link the token to its secondary market (one-time setter).
+        const tokenContract = new ethers.Contract(tokenAddr, ["function setSecondaryMarket(address)"], wallet);
+        const linkTx = await tokenContract.setSecondaryMarket(marketAddr, { nonce: await nextNonce() });
+        await linkTx.wait();
+        app.log.info(`[chain ${chainId}] token ${tokenAddr} linked to secondary market ${marketAddr}`);
+
         // 3c. Attest APPROVED on-chain (the gate verdict, verifier-signed),
         // binding the verdict to the exact reviewed payload hash.
         const attestations = new ethers.Contract(cfg.attestationRegistry, ATTESTATION_ABI, wallet);
@@ -528,6 +590,7 @@ app.post("/v1/issuances", { preHandler: x402Gate }, async (req, reply) => {
           onChain: {
             token: tokenAddr,
             distributor: distributorAddr,
+            market: marketAddr,
             attestationTx: attestReceipt!.hash,
             listingTx: issueReceipt!.hash,
             explorer: `${chainInfo.scan}/tx/${issueReceipt!.hash}`,
@@ -565,13 +628,14 @@ async function hydrateIssuance(registry: ethers.Contract, provider: ethers.JsonR
   const attestations = cfg
     ? new ethers.Contract(cfg.attestationRegistry, ATTESTATION_ABI, provider)
     : null;
-  const [name, symbol, totalSupply, accDividend, totalDeposited, lastDepositedBy, att] = await Promise.all([
+  const [name, symbol, totalSupply, accDividend, totalDeposited, lastDepositedBy, secondaryMarket, att] = await Promise.all([
     token.name().catch(() => ""),
     token.symbol().catch(() => ""),
     token.totalSupply().catch(() => 0n),
     distributor.accDividendPerToken().catch(() => 0n),
     distributor.totalDeposited().catch(() => 0n),
     distributor.lastDepositedBy().catch(() => ethers.ZeroAddress),
+    token.secondaryMarket().catch(() => ethers.ZeroAddress),
     attestations ? attestations.getAttestation(i.token).catch(() => null) : null,
   ]);
   const hasAtt = !!att && att.target !== ethers.ZeroAddress;
@@ -582,6 +646,7 @@ async function hydrateIssuance(registry: ethers.Contract, provider: ethers.JsonR
     issuer: i.issuer,
     token: i.token,
     distributor: i.distributor,
+    market: secondaryMarket === ethers.ZeroAddress ? null : (secondaryMarket as string),
     name,
     symbol,
     pricePerTokenUsdt: ethers.formatUnits(i.pricePerToken, 6),

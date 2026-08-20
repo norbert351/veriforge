@@ -57,6 +57,10 @@ declare module "hardhat/types/runtime" {
       name: "RwaToken",
       signerOrOptions?: ethers.Signer | FactoryOptions
     ): Promise<Contracts.RwaToken__factory>;
+    getContractFactory(
+      name: "SecondaryMarket",
+      signerOrOptions?: ethers.Signer | FactoryOptions
+    ): Promise<Contracts.SecondaryMarket__factory>;
 
     getContractAt(
       name: "IERC1155Errors",
@@ -113,6 +117,11 @@ declare module "hardhat/types/runtime" {
       address: string | ethers.Addressable,
       signer?: ethers.Signer
     ): Promise<Contracts.RwaToken>;
+    getContractAt(
+      name: "SecondaryMarket",
+      address: string | ethers.Addressable,
+      signer?: ethers.Signer
+    ): Promise<Contracts.SecondaryMarket>;
 
     deployContract(
       name: "IERC1155Errors",
@@ -158,6 +167,10 @@ declare module "hardhat/types/runtime" {
       name: "RwaToken",
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.RwaToken>;
+    deployContract(
+      name: "SecondaryMarket",
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.SecondaryMarket>;
 
     deployContract(
       name: "IERC1155Errors",
@@ -214,6 +227,11 @@ declare module "hardhat/types/runtime" {
       args: any[],
       signerOrOptions?: ethers.Signer | DeployContractOptions
     ): Promise<Contracts.RwaToken>;
+    deployContract(
+      name: "SecondaryMarket",
+      args: any[],
+      signerOrOptions?: ethers.Signer | DeployContractOptions
+    ): Promise<Contracts.SecondaryMarket>;
 
     // default types
     getContractFactory(

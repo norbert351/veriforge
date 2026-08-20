@@ -350,8 +350,8 @@
       ]
     },
     "/home/ubuntu/veriforge/packages/contracts/contracts/RwaToken.sol": {
-      "lastModificationDate": 1786142868474,
-      "contentHash": "d5bf811b6299f9be6374b04a69853009",
+      "lastModificationDate": 1787248230591,
+      "contentHash": "ac0de88754c29eee78d4f90db3d3b3fb",
       "sourceName": "contracts/RwaToken.sol",
       "solcConfig": {
         "version": "0.8.28",
@@ -387,6 +387,45 @@
       ],
       "artifacts": [
         "RwaToken"
+      ]
+    },
+    "/home/ubuntu/veriforge/packages/contracts/contracts/SecondaryMarket.sol": {
+      "lastModificationDate": 1787247738054,
+      "contentHash": "64b85694587e60642817cc1dac0b6a00",
+      "sourceName": "contracts/SecondaryMarket.sol",
+      "solcConfig": {
+        "version": "0.8.28",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "viaIR": true,
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "@openzeppelin/contracts/token/ERC20/IERC20.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.28"
+      ],
+      "artifacts": [
+        "SecondaryMarket"
       ]
     }
   }

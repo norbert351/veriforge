@@ -28,3 +28,5 @@ export type { RevenueDistributor } from "./contracts/RevenueDistributor";
 export { RevenueDistributor__factory } from "./factories/contracts/RevenueDistributor__factory";
 export type { RwaToken } from "./contracts/RwaToken";
 export { RwaToken__factory } from "./factories/contracts/RwaToken__factory";
+export type { SecondaryMarket } from "./contracts/SecondaryMarket";
+export { SecondaryMarket__factory } from "./factories/contracts/SecondaryMarket__factory";

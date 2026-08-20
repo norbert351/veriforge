@@ -6,3 +6,4 @@ export { AttestationRegistry__factory } from "./AttestationRegistry__factory";
 export { IssuanceRegistry__factory } from "./IssuanceRegistry__factory";
 export { RevenueDistributor__factory } from "./RevenueDistributor__factory";
 export { RwaToken__factory } from "./RwaToken__factory";
+export { SecondaryMarket__factory } from "./SecondaryMarket__factory";

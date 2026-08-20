@@ -13,6 +13,10 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 contract RwaToken is ERC20 {
     address public immutable issuer;
     address public immutable usdt;
+    /// @notice Per-issuance secondary-market pool where units trade at a
+    ///         demand-driven price. Set once after both contracts deploy
+    ///         (the contracts reference each other, so the field is mutable).
+    address public secondaryMarket;
     uint256 public immutable pricePerToken; // USDT (6 dp) per 1e18 token unit
 
     event Bought(address indexed buyer, uint256 usdtAmount, uint256 tokenAmount);
@@ -20,6 +24,7 @@ contract RwaToken is ERC20 {
     error ZeroPrice();
     error ZeroAmount();
     error TransferFailed();
+    error AlreadySet();
 
     constructor(
         string memory name_,
@@ -34,6 +39,15 @@ contract RwaToken is ERC20 {
         issuer = issuer_;
         usdt = usdt_;
         pricePerToken = pricePerToken_;
+    }
+
+    /// @notice One-time link to the per-issuance secondary market. Callable by
+    ///         anyone but only the first call wins; the API sets it right after
+    ///         deployment of both contracts.
+    function setSecondaryMarket(address market_) external {
+        if (market_ == address(0)) revert ZeroAddress();
+        if (secondaryMarket != address(0)) revert AlreadySet();
+        secondaryMarket = market_;
     }
 
     error ZeroAddress();

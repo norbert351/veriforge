@@ -34,6 +34,8 @@ export interface RwaTokenInterface extends Interface {
       | "issuer"
       | "name"
       | "pricePerToken"
+      | "secondaryMarket"
+      | "setSecondaryMarket"
       | "symbol"
       | "totalSupply"
       | "transfer"
@@ -65,6 +67,14 @@ export interface RwaTokenInterface extends Interface {
     functionFragment: "pricePerToken",
     values?: undefined
   ): string;
+  encodeFunctionData(
+    functionFragment: "secondaryMarket",
+    values?: undefined
+  ): string;
+  encodeFunctionData(
+    functionFragment: "setSecondaryMarket",
+    values: [AddressLike]
+  ): string;
   encodeFunctionData(functionFragment: "symbol", values?: undefined): string;
   encodeFunctionData(
     functionFragment: "totalSupply",
@@ -89,6 +99,14 @@ export interface RwaTokenInterface extends Interface {
   decodeFunctionResult(functionFragment: "name", data: BytesLike): Result;
   decodeFunctionResult(
     functionFragment: "pricePerToken",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "secondaryMarket",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "setSecondaryMarket",
     data: BytesLike
   ): Result;
   decodeFunctionResult(functionFragment: "symbol", data: BytesLike): Result;
@@ -229,6 +247,14 @@ export interface RwaToken extends BaseContract {
 
   pricePerToken: TypedContractMethod<[], [bigint], "view">;
 
+  secondaryMarket: TypedContractMethod<[], [string], "view">;
+
+  setSecondaryMarket: TypedContractMethod<
+    [market_: AddressLike],
+    [void],
+    "nonpayable"
+  >;
+
   symbol: TypedContractMethod<[], [string], "view">;
 
   totalSupply: TypedContractMethod<[], [bigint], "view">;
@@ -283,6 +309,12 @@ export interface RwaToken extends BaseContract {
   getFunction(
     nameOrSignature: "pricePerToken"
   ): TypedContractMethod<[], [bigint], "view">;
+  getFunction(
+    nameOrSignature: "secondaryMarket"
+  ): TypedContractMethod<[], [string], "view">;
+  getFunction(
+    nameOrSignature: "setSecondaryMarket"
+  ): TypedContractMethod<[market_: AddressLike], [void], "nonpayable">;
   getFunction(
     nameOrSignature: "symbol"
   ): TypedContractMethod<[], [string], "view">;

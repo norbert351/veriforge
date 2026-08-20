@@ -7,3 +7,4 @@ export type { AttestationRegistry } from "./AttestationRegistry";
 export type { IssuanceRegistry } from "./IssuanceRegistry";
 export type { RevenueDistributor } from "./RevenueDistributor";
 export type { RwaToken } from "./RwaToken";
+export type { SecondaryMarket } from "./SecondaryMarket";
