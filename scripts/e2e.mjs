@@ -258,8 +258,9 @@ Terms: 100,000 units at 10 USDT each. Quarterly distributions, buyback at assay 
     const p1 = await market.price();
     console.log("13. investor bought on market. price now:", ethers.formatUnits(p1, 6), "USDT/unit", p1 > p0 ? "(UP ✓)" : "(not up)");
 
-    // 14. partially sell back -> real exit + price-aware
-    const sellQty = ethers.parseUnits("2", 18);
+    // 14. partially sell back -> real exit + price-aware (sell half of what's held)
+    const heldBal = await new ethers.Contract(tokenAddr, ["function balanceOf(address) view returns (uint256)"], provider).balanceOf(investor.address);
+    const sellQty = heldBal / 2n;
     await new ethers.Contract(tokenAddr, erc20Approve, investor)
       .approve(marketAddr, sellQty, { nonce: invNonce++ }).then((t) => t.wait());
     await mktInv.sell(sellQty, { nonce: invNonce++ }).then((t) => t.wait());

@@ -174,7 +174,7 @@ VeriForge ships the issuance rail and the secondary market today. The next
 upgrade keeps the "platform holds no funds" and "AI-gated, on-chain"
 guarantees at the center:
 
-### 2. Automated revenue verification & distribution
+### 1. Automated revenue verification & distribution
 The secondary market is shipped. Next, revenue moves from *self-reported* to
 *verifiable*:
 
