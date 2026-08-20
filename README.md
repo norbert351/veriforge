@@ -145,6 +145,41 @@ Next.js 15 + RainbowKit (wagmi v2) wallet model. BOT Chain 968/677 is a first-cl
 | Deposit revenue | Market tab, issuer row |
 | Claim pro-rata share | Market tab, holder row |
 
+## Roadmap
+
+VeriForge ships the issuance rail today. Two upgrades are next — both keep the
+"platform holds no funds" and "AI-gated, on-chain" guarantees at the center:
+
+### 1. Automated revenue verification & distribution
+Today revenue is reported by the issuer (`RevenueDistributor.deposit()`, now
+`onlyIssuer`-gated) and claimed pro-rata by holders. The roadmap moves revenue
+from *self-reported* to *verifiable*:
+
+- **Revenue oracle / verification rail** — cross-check the issuer's declared
+  revenue against a live data source (invoicing, payment-settlement, or a
+  custody/webhook feed) before a deposit is recognized, so a judge or auditor
+  can see *why* a payout is legitimate — not just that it happened.
+- **Automated distribution** — scheduled, push-based pro-rata payouts to
+  holders (in addition to today's pull-based claims), removing the manual
+  issuer-deposit step for qualifying issuers.
+- **Vested / escrowed revenue** — enabled for issuers who want provable custody
+  of declared earnings.
+
+### 2. Secondary market — investors earn two ways
+Add a per-issuance secondary market on top of the existing fixed primary
+issuance, so token units become **tradeable at a demand-driven price**:
+
+- **Price appreciation** — buying demand pushes the unit price up, so early
+  investors can sell at a gain.
+- **Two independent earnings rails** — revenue yield (via `RevenueDistributor`)
+  **plus** capital appreciation, decoupled from each other.
+- **Trade UI** — a Trade view on each issuance card (buy/sell at market price,
+  with order-book-style transparency) alongside the existing Buy / Claim flows.
+
+Design goal: keep the clean primary raise (payment to issuer) unchanged and add
+the market on top, so investors earn from both project revenue and price
+increase without altering the fixed launch economics.
+
 ## BOT Chain facts
 
 - Mainnet chain ID 677, RPC `https://rpc.botchain.ai`, explorer `https://scan.botchain.ai`
