@@ -99,6 +99,10 @@ const DISTRIBUTOR_ABI = [
   "function claimable(address) view returns (uint256)",
   "function accDividendPerToken() view returns (uint256)",
   "function token() view returns (address)",
+  "function issuer() view returns (address)",
+  "function totalDeposited() view returns (uint256)",
+  "function lastDepositedBy() view returns (address)",
+  "function lastDepositedAt() view returns (uint256)",
 ];
 
 // Load real compiled artifacts from the contracts package (hardhat output).
@@ -476,16 +480,19 @@ app.post("/v1/issuances", { preHandler: x402Gate }, async (req, reply) => {
       }
 
       try {
-        // 3a. Deploy RwaToken (units)
+        // 3a. Deploy RwaToken (units). The on-chain issuer is the DECLARED
+        //     issuer (asset owner) who signed the payload, so buy proceeds
+        //     land with the asset owner — not the platform's verifier wallet.
         const tokenFactory = new ethers.ContractFactory(RWATOKEN_ARTIFACT.abi, RWATOKEN_ARTIFACT.bytecode, wallet);
-        const token = await tokenFactory.deploy(name, symbol, wallet.address, usdt, priceRaw, { nonce: await nextNonce() });
+        const token = await tokenFactory.deploy(name, symbol, issuerAddress, usdt, priceRaw, { nonce: await nextNonce() });
         await token.waitForDeployment();
         const tokenAddr = await token.getAddress();
         app.log.info(`[chain ${chainId}] RwaToken deployed: ${tokenAddr}`);
 
-        // 3b. Deploy RevenueDistributor
+        // 3b. Deploy RevenueDistributor — restricted to the declared issuer,
+        //     so only the asset owner can deposit/report revenue.
         const distFactory = new ethers.ContractFactory(DISTRIBUTOR_ARTIFACT.abi, DISTRIBUTOR_ARTIFACT.bytecode, wallet);
-        const distributor = await distFactory.deploy(tokenAddr, usdt, { nonce: await nextNonce() });
+        const distributor = await distFactory.deploy(tokenAddr, usdt, issuerAddress, { nonce: await nextNonce() });
         await distributor.waitForDeployment();
         const distributorAddr = await distributor.getAddress();
         app.log.info(`[chain ${chainId}] RevenueDistributor deployed: ${distributorAddr}`);
@@ -503,7 +510,7 @@ app.post("/v1/issuances", { preHandler: x402Gate }, async (req, reply) => {
         // 3d. List in IssuanceRegistry — reverts on-chain if not APPROVED
         // or if the payload commitment does not match the attestation.
         const registry = new ethers.Contract(cfg.issuanceRegistry, ISSUANCE_ABI, wallet);
-        const issueTx = await registry.issue(wallet.address, tokenAddr, distributorAddr, priceRaw, docsUri, payloadHash, { gasLimit: 600_000, nonce: await nextNonce() });
+        const issueTx = await registry.issue(issuerAddress, tokenAddr, distributorAddr, priceRaw, docsUri, payloadHash, { gasLimit: 600_000, nonce: await nextNonce() });
         const issueReceipt = await issueTx.wait();
         const id = Number(await registry.count());
         app.log.info(`[chain ${chainId}] Issuance #${id} listed: ${issueReceipt!.hash}`);
@@ -558,11 +565,13 @@ async function hydrateIssuance(registry: ethers.Contract, provider: ethers.JsonR
   const attestations = cfg
     ? new ethers.Contract(cfg.attestationRegistry, ATTESTATION_ABI, provider)
     : null;
-  const [name, symbol, totalSupply, accDividend, att] = await Promise.all([
+  const [name, symbol, totalSupply, accDividend, totalDeposited, lastDepositedBy, att] = await Promise.all([
     token.name().catch(() => ""),
     token.symbol().catch(() => ""),
     token.totalSupply().catch(() => 0n),
     distributor.accDividendPerToken().catch(() => 0n),
+    distributor.totalDeposited().catch(() => 0n),
+    distributor.lastDepositedBy().catch(() => ethers.ZeroAddress),
     attestations ? attestations.getAttestation(i.token).catch(() => null) : null,
   ]);
   const hasAtt = !!att && att.target !== ethers.ZeroAddress;
@@ -580,6 +589,8 @@ async function hydrateIssuance(registry: ethers.Contract, provider: ethers.JsonR
     docsUri: i.docsUri,
     payloadHash: i.payloadHash,
     accDividendPerToken: (accDividend as bigint).toString(),
+    totalRevenueDeposited: ethers.formatUnits(totalDeposited as bigint, 6),
+    revenueDepositedBy: lastDepositedBy === ethers.ZeroAddress ? null : (lastDepositedBy as string),
     listedAt: Number(i.listedAt),
     blockNumber: Number(i.blockNumber),
     explorer: `${info.scan}/address/${i.token}`,

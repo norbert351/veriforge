@@ -44,7 +44,7 @@ describe("Issuance loop (AI gate → list → buy → revenue)", () => {
 
     token = await deployToken();
     const RD = await ethers.getContractFactory("RevenueDistributor");
-    distributor = (await RD.deploy(token.target, usdt.target)) as RevenueDistributor;
+    distributor = (await RD.deploy(token.target, usdt.target, issuer.address)) as RevenueDistributor;
   });
 
   describe("IssuanceRegistry — the AI gate enforced on-chain", () => {
@@ -185,6 +185,24 @@ describe("Issuance loop (AI gate → list → buy → revenue)", () => {
         distributor,
         "NoSupply"
       );
+    });
+
+    it("reverts deposit from a non-issuer (onlyIssuer guard)", async () => {
+      await usdt.mint(investor.address, 100n * 1_000_000n);
+      // buy units so the distributor has supply
+      await approveUsdt(investor, token.target, 10n * 1_000_000n);
+      await token.connect(investor).buy(10n * 1_000_000n);
+      // non-issuer (investor) tries to deposit — must revert NotIssuer
+      await approveUsdt(investor, distributor.target, 5n * 1_000_000n);
+      await expect(distributor.connect(investor).deposit(5n * 1_000_000n)).to.be.revertedWithCustomError(
+        distributor,
+        "NotIssuer"
+      );
+      // issuer can still deposit
+      await approveUsdt(issuer, distributor.target, 5n * 1_000_000n);
+      await distributor.connect(issuer).deposit(5n * 1_000_000n);
+      expect(await distributor.totalDeposited()).to.equal(5n * 1_000_000n);
+      expect(await distributor.lastDepositedBy()).to.equal(issuer.address);
     });
   });
 

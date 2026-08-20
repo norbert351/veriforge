@@ -30,8 +30,12 @@ export interface RevenueDistributorInterface extends Interface {
       | "claim"
       | "claimable"
       | "deposit"
+      | "issuer"
+      | "lastDepositedAt"
+      | "lastDepositedBy"
       | "paidPerToken"
       | "token"
+      | "totalDeposited"
       | "usdt"
   ): FunctionFragment;
 
@@ -50,11 +54,24 @@ export interface RevenueDistributorInterface extends Interface {
     functionFragment: "deposit",
     values: [BigNumberish]
   ): string;
+  encodeFunctionData(functionFragment: "issuer", values?: undefined): string;
+  encodeFunctionData(
+    functionFragment: "lastDepositedAt",
+    values?: undefined
+  ): string;
+  encodeFunctionData(
+    functionFragment: "lastDepositedBy",
+    values?: undefined
+  ): string;
   encodeFunctionData(
     functionFragment: "paidPerToken",
     values: [AddressLike]
   ): string;
   encodeFunctionData(functionFragment: "token", values?: undefined): string;
+  encodeFunctionData(
+    functionFragment: "totalDeposited",
+    values?: undefined
+  ): string;
   encodeFunctionData(functionFragment: "usdt", values?: undefined): string;
 
   decodeFunctionResult(
@@ -64,11 +81,24 @@ export interface RevenueDistributorInterface extends Interface {
   decodeFunctionResult(functionFragment: "claim", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "claimable", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "deposit", data: BytesLike): Result;
+  decodeFunctionResult(functionFragment: "issuer", data: BytesLike): Result;
+  decodeFunctionResult(
+    functionFragment: "lastDepositedAt",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "lastDepositedBy",
+    data: BytesLike
+  ): Result;
   decodeFunctionResult(
     functionFragment: "paidPerToken",
     data: BytesLike
   ): Result;
   decodeFunctionResult(functionFragment: "token", data: BytesLike): Result;
+  decodeFunctionResult(
+    functionFragment: "totalDeposited",
+    data: BytesLike
+  ): Result;
   decodeFunctionResult(functionFragment: "usdt", data: BytesLike): Result;
 }
 
@@ -149,9 +179,17 @@ export interface RevenueDistributor extends BaseContract {
 
   deposit: TypedContractMethod<[amount: BigNumberish], [void], "nonpayable">;
 
+  issuer: TypedContractMethod<[], [string], "view">;
+
+  lastDepositedAt: TypedContractMethod<[], [bigint], "view">;
+
+  lastDepositedBy: TypedContractMethod<[], [string], "view">;
+
   paidPerToken: TypedContractMethod<[arg0: AddressLike], [bigint], "view">;
 
   token: TypedContractMethod<[], [string], "view">;
+
+  totalDeposited: TypedContractMethod<[], [bigint], "view">;
 
   usdt: TypedContractMethod<[], [string], "view">;
 
@@ -172,11 +210,23 @@ export interface RevenueDistributor extends BaseContract {
     nameOrSignature: "deposit"
   ): TypedContractMethod<[amount: BigNumberish], [void], "nonpayable">;
   getFunction(
+    nameOrSignature: "issuer"
+  ): TypedContractMethod<[], [string], "view">;
+  getFunction(
+    nameOrSignature: "lastDepositedAt"
+  ): TypedContractMethod<[], [bigint], "view">;
+  getFunction(
+    nameOrSignature: "lastDepositedBy"
+  ): TypedContractMethod<[], [string], "view">;
+  getFunction(
     nameOrSignature: "paidPerToken"
   ): TypedContractMethod<[arg0: AddressLike], [bigint], "view">;
   getFunction(
     nameOrSignature: "token"
   ): TypedContractMethod<[], [string], "view">;
+  getFunction(
+    nameOrSignature: "totalDeposited"
+  ): TypedContractMethod<[], [bigint], "view">;
   getFunction(
     nameOrSignature: "usdt"
   ): TypedContractMethod<[], [string], "view">;

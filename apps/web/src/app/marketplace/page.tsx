@@ -24,6 +24,8 @@ interface Issuance {
   docsUri: string;
   payloadHash: string;
   accDividendPerToken: string;
+  totalRevenueDeposited?: string;
+  revenueDepositedBy?: string | null;
   listedAt: number;
   blockNumber: number;
   explorer: string;
@@ -648,6 +650,7 @@ export default function Marketplace() {
                 <IssuanceCard
                   key={iss.id}
                   iss={iss}
+                  connectedAddress={address}
                   claimable={claimables[iss.id]}
                   onBuy={(amt) => buyUnits(iss, amt)}
                   onClaim={() => claimRevenue(iss)}
@@ -673,6 +676,7 @@ export default function Marketplace() {
 
 function IssuanceCard({
   iss,
+  connectedAddress,
   claimable,
   onBuy,
   onClaim,
@@ -680,6 +684,7 @@ function IssuanceCard({
   balanceHint,
 }: {
   iss: Issuance;
+  connectedAddress?: `0x${string}`;
   claimable?: string;
   onBuy: (amt: string) => void;
   onClaim: () => void;
@@ -689,6 +694,15 @@ function IssuanceCard({
   const [amount, setAmount] = useState("10");
   const [depositAmt, setDepositAmt] = useState("50");
   const [units, setUnits] = useState("");
+
+  // Only the declared on-chain issuer controls the revenue deposit row.
+  const isIssuer =
+    !!connectedAddress &&
+    !!iss.issuer &&
+    connectedAddress.toLowerCase() === iss.issuer.toLowerCase();
+  const hasDepositedRevenue =
+    iss.totalRevenueDeposited !== undefined &&
+    parseFloat(iss.totalRevenueDeposited || "0") > 0;
 
   useEffect(() => {
     let live = true;
@@ -761,14 +775,24 @@ function IssuanceCard({
           </button>
         )}
       </div>
-      <div className="vf-row" style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed #23233a" }}>
-        <span style={{ fontSize: "0.75rem", color: "#9ca3af", whiteSpace: "nowrap" }}>Issuer · deposit revenue</span>
-        <input value={depositAmt} onChange={(e) => setDepositAmt(e.target.value)} type="number" step="0.01" min="0" style={{ ...inputStyle, maxWidth: 110, flexBasis: 90 }} />
-        <span style={{ fontSize: "0.8rem", color: "#9ca3af" }}>USDT</span>
-        <button onClick={() => onDeposit(depositAmt)} style={btnStyle({ outline: true })}>
-          Deposit
-        </button>
-        <span style={{ fontSize: "0.75rem", color: "#6b7280" }}>→ pro-rata to holders</span>
+      <div className="vf-row" style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed #23233a", flexWrap: "wrap" }}>
+        <span style={{ fontSize: "0.75rem", color: "#9ca3af", whiteSpace: "nowrap" }}>
+          {hasDepositedRevenue
+            ? `Revenue deposited: ${iss.totalRevenueDeposited} USDT${iss.revenueDepositedBy ? ` · by ${iss.revenueDepositedBy.slice(0, 6)}…${iss.revenueDepositedBy.slice(-4)}` : ""}`
+            : "No revenue deposited yet"}
+        </span>
+        {isIssuer ? (
+          <>
+            <input value={depositAmt} onChange={(e) => setDepositAmt(e.target.value)} type="number" step="0.01" min="0" style={{ ...inputStyle, maxWidth: 110, flexBasis: 90 }} />
+            <span style={{ fontSize: "0.8rem", color: "#9ca3af" }}>USDT</span>
+            <button onClick={() => onDeposit(depositAmt)} style={btnStyle({ outline: true })}>
+              Deposit
+            </button>
+            <span style={{ fontSize: "0.75rem", color: "#6b7280" }}>→ pro-rata to holders</span>
+          </>
+        ) : (
+          <span style={{ fontSize: "0.72rem", color: "#4b5563" }}>· issuer-only control</span>
+        )}
       </div>
     </div>
   );

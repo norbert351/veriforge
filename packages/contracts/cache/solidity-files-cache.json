@@ -78,8 +78,8 @@
       ]
     },
     "/home/ubuntu/veriforge/packages/contracts/contracts/RevenueDistributor.sol": {
-      "lastModificationDate": 1786142868480,
-      "contentHash": "3d4a20646bd20e3c738387aa61ab76bd",
+      "lastModificationDate": 1787229680972,
+      "contentHash": "0b07de2e21caf803db35472c6001d0b2",
       "sourceName": "contracts/RevenueDistributor.sol",
       "solcConfig": {
         "version": "0.8.28",
