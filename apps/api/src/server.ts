@@ -193,16 +193,23 @@ app.get("/v1/issuances", async (req, reply) => {
   }
   // Deduplicate by asset symbol — a real marketplace lists one card per asset.
   // If an asset was launched more than once (e.g. a test re-run), keep the
-  // newest live issuance and hide the older identical duplicates.
-  const seen = new Set<string>();
-  const out: any[] = [];
-  for (const iss of [...all].reverse()) {
+  // BEST (most active) issuance: a seeded secondary market and real supply
+  // outrank an empty re-launch. Score = supply + live-market + revenue.
+  const best = new Map<string, { iss: any; score: number }>();
+  for (const iss of all) {
     const key = `${(iss.symbol || "").toUpperCase()}|${(iss.issuer || "").toLowerCase()}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(iss);
+    const supply = parseFloat(iss.totalSupply || "0");
+    const rev = parseFloat(iss.totalRevenueDeposited || "0");
+    const hasMarket = !!(iss.market && iss.market !== "0x0000000000000000000000000000000000000000");
+    // Chart-capable (new contract, records on-chain price history) outranks an
+    // old-contract or empty re-launch — this keeps the live-diagram card.
+    const score = supply * 1000 + rev * 10 + (hasMarket ? 5 : 0) + (iss.chart ? 100000 : 0) + (iss.id || 0);
+    const prev = best.get(key);
+    if (!prev || score > prev.score) best.set(key, { iss, score });
   }
+  const out = [...best.values()].map((b) => b.iss);
   // newest first — the latest live issuance is the first card a judge sees
+  out.sort((a, b) => (b.id || 0) - (a.id || 0));
   return { chainId, count: out.length, issuances: out };
 });
 
@@ -663,6 +670,13 @@ async function hydrateIssuance(registry: ethers.Contract, provider: ethers.JsonR
   ]);
   const hasAtt = !!att && att.target !== ethers.ZeroAddress;
   const info = getChainInfo(chainId);
+  // New-contract secondary markets record on-chain price history (chart feed);
+  // old markets (pre-price-history) return 0/count and we detect them here.
+  let chart = false;
+  if (secondaryMarket !== ethers.ZeroAddress) {
+    const m = new ethers.Contract(secondaryMarket as string, SEC_MARKET_ABI, provider);
+    try { const n = await m.priceHistoryCount(); chart = Number(n) > 0; } catch { chart = false; }
+  }
   return {
     id: Number(i.id),
     chain_id: chainId,
@@ -670,6 +684,7 @@ async function hydrateIssuance(registry: ethers.Contract, provider: ethers.JsonR
     token: i.token,
     distributor: i.distributor,
     market: secondaryMarket === ethers.ZeroAddress ? null : (secondaryMarket as string),
+    chart,
     name,
     symbol,
     pricePerTokenUsdt: ethers.formatUnits(i.pricePerToken, 6),
