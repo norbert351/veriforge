@@ -944,6 +944,11 @@ function IssuanceCard({
           {iss.payloadHash ? `docs committed ${iss.payloadHash.slice(0, 10)}…${iss.payloadHash.slice(-6)}` : "docs commitment on-chain"}
         </span>
       </div>
+      <div className="vf-row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 14, marginBottom: 4 }}>
+        <span style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".06em", color: "#6b7280" }}>
+          • Primary issuance · buy units for USDT
+        </span>
+      </div>
       <div className="vf-row" style={{ gap: 8, flexWrap: "wrap" }}>
         <input value={amount} onChange={(e) => setAmount(e.target.value)} type="number" step="0.01" min="0" style={{ ...inputStyle, maxWidth: 130, flexBasis: 110 }} />
         <span style={{ fontSize: "0.8rem", color: "#9ca3af" }}>USDT</span>
@@ -979,9 +984,9 @@ function IssuanceCard({
       )}
 
       {/* Secondary market — investors earn from price appreciation too */}
-      <div className="vf-row" style={{ marginTop: 12, paddingTop: 12, borderTop: "1px dashed #2c2c47", flexDirection: "column", alignItems: "stretch", gap: 8 }}>
+      <div className="vf-row" style={{ marginTop: 14, paddingTop: 12, borderTop: "1px dashed #2c2c47", flexDirection: "column", alignItems: "stretch", gap: 8 }}>
         <div className="vf-row" style={{ alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ fontSize: "0.78rem", fontWeight: 700, color: "#c4b5fd" }}>Secondary market</span>
+          <span style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".06em", color: "#c4b5fd" }}>• Secondary market · trade at live price</span>
           {marketPrice !== null ? (
             <span style={{ fontSize: "0.78rem", color: "#10b981" }}>
               · live price ${Number(marketPrice).toFixed(2)} /unit
