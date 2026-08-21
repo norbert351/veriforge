@@ -30,7 +30,7 @@ The chain that ships the compliant issuance rail first defines how the asset sid
 
 - 27 contract tests passing
 - Full e2e loop working locally: pay, review, deploy, list, buy, deposit, claim
-- Live on Bohr testnet (chain 968), targeting BOT mainnet (chain 677)
+- Live on BOT mainnet (chain 677) with 2 real mainnet issuances, plus Bohr testnet (chain 968)
 - Deadline Aug 20 2026
 
 ## What I need from you

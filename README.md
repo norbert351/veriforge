@@ -188,6 +188,19 @@ The secondary market is shipped. Next, revenue moves from *self-reported* to
 - **Vested / escrowed revenue** — enabled for issuers who want provable custody
   of declared earnings.
 
+## Live mainnet state (verified on-chain, chain 677)
+
+Mirrored by the API's `/v1/issuances?chainId=677` and visible in the web
+Marketplace on the **Mainnet** toggle. As of this read:
+
+- **IssuanceRegistry (`0x9369…65`) count: 2 real mainnet issuances**
+  - **#1** token `0x696d…c275`
+  - **#2 LLWF (Lagos Logistics Warehouse Fund)** token `0x1bD0…F8EE` with a
+    **live SecondaryMarket** at `0x48D1…5C4` — **price $5.00/unit** on chain
+- **AI gate approved both** (verdict written on-chain) and the committed
+  payloadHash matches the attestation — full buy → revenue → claim →
+  secondary-market loop executed on mainnet.
+
 ## BOT Chain facts
 
 - Mainnet chain ID 677, RPC `https://rpc.botchain.ai`, explorer `https://scan.botchain.ai`
@@ -198,4 +211,4 @@ The secondary market is shipped. Next, revenue moves from *self-reported* to
 
 - **RWA Applications** (highest priority): asset distribution and asset management are named directions
 - **AI Native**: the AI compliance gate is the on-chain decision entity, verdicts written on-chain, not a chat wrapper
-- **Deep mainnet integration**: the registry pair is a real deployment, not a demo
+- **Deep mainnet integration**: the registry pair is a real deployment with **live issuances on 677**, not a demo
