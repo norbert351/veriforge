@@ -390,8 +390,8 @@
       ]
     },
     "/home/ubuntu/veriforge/packages/contracts/contracts/SecondaryMarket.sol": {
-      "lastModificationDate": 1787247738054,
-      "contentHash": "64b85694587e60642817cc1dac0b6a00",
+      "lastModificationDate": 1787292274697,
+      "contentHash": "29cf8e45554f88be148345be7c87da92",
       "sourceName": "contracts/SecondaryMarket.sol",
       "solcConfig": {
         "version": "0.8.28",

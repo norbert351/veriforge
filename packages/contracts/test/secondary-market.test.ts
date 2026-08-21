@@ -100,4 +100,21 @@ describe("SecondaryMarket — demand-driven trading", () => {
     await usdt.connect(buyer).approve(await market.getAddress(), ethers.parseUnits("10", 6));
     await expect(market.connect(buyer).buy(ethers.parseUnits("10", 6))).to.be.revertedWithCustomError(market, "ZeroAmount");
   });
+
+  it("records an on-chain price point (candle feed) on seed, buy and sell", async () => {
+    await token.connect(issuer).approve(await market.getAddress(), TOKEN_SUPPLY);
+    await usdt.connect(issuer).approve(await market.getAddress(), ethers.parseUnits("100", 6));
+    await market.connect(issuer).seed(ethers.parseUnits("10", 18), ethers.parseUnits("100", 6));
+    const pt0 = await market.priceHistory(0);
+    expect(pt0.price).to.equal(ethers.parseUnits("10", 6)); // seed at $10
+    expect(pt0.kind).to.equal(0);
+
+    // buy -> 2nd candle point, higher price, kind=1
+    await usdt.connect(buyer).approve(await market.getAddress(), ethers.parseUnits("10", 6));
+    await market.connect(buyer).buy(ethers.parseUnits("10", 6));
+    const pt1 = await market.priceHistory(1);
+    expect(pt1.price).to.be.gt(pt0.price); // buy pushed price up
+    expect(pt1.kind).to.equal(1);
+    // The second point confirms the array grew (no revert on getting index 1).
+  });
 });

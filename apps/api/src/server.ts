@@ -126,6 +126,8 @@ const SEC_MARKET_ABI = [
   "function quoteUsdtOut(uint256) view returns (uint256)",
   "function buy(uint256) returns (uint256)",
   "function sell(uint256) returns (uint256)",
+  "function priceHistory(uint256) view returns (tuple(uint32 ts,uint64 price,uint8 kind))",
+  "function priceHistoryCount() view returns (uint256)",
 ];
 
 function getVerifierWallet(chainId: number) {
@@ -258,12 +260,23 @@ app.get("/v1/issuances/:id/market", async (req, reply) => {
       market.reserveToken().catch(() => 0n),
       market.reserveUsdt().catch(() => 0n),
     ]);
+    // Full on-chain price history for the K-line / candle chart.
+    let historyLen = 0n;
+    try { historyLen = await market.priceHistoryCount(); } catch { /* old market w/o feed */ }
+    const history: { ts: number; price: string; kind: number }[] = [];
+    const len = Number(historyLen);
+    for (let i = 0; i < len; i++) {
+      const p = await market.priceHistory(i).catch(() => null);
+      if (!p) continue;
+      history.push({ ts: Number(p.ts), price: ethers.formatUnits(p.price, 6), kind: Number(p.kind) });
+    }
     return {
       issuance_id: Number(issuance.id),
       market: marketAddr,
       price_usdt: ethers.formatUnits(price, 6),
       reserve_token: ethers.formatUnits(reserveToken as bigint, 18),
       reserve_usdt: ethers.formatUnits(reserveUsdt as bigint, 6),
+      price_history: history,
       explorer: `${info.scan}/address/${marketAddr}`,
     };
   } catch {

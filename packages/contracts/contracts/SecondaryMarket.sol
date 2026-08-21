@@ -26,6 +26,19 @@ contract SecondaryMarket {
     /// @notice Cumulative token that ever left the pool via buys (18 dp).
     uint256 public totalSellVolume;
 
+    /// @notice A single on-chain price snapshot (for the K-line/candle chart).
+    struct PricePoint {
+        uint32 ts;      // unix seconds
+        uint64 price;   // USDT per token (6 dp)
+        uint8 kind;     // 0=seed, 1=buy, 2=sell
+    }
+    /// @notice Full on-chain price history — drives the candlestick chart.
+    PricePoint[] public priceHistory;
+
+    function priceHistoryCount() external view returns (uint256) {
+        return priceHistory.length;
+    }
+
     event Seeded(address indexed by, uint256 tokenAmount, uint256 usdtAmount);
     event Swapped(address indexed by, bool isBuy, uint256 tokenAmount, uint256 usdtAmount);
 
@@ -47,6 +60,11 @@ contract SecondaryMarket {
         _;
     }
 
+    /// @notice Append a price snapshot (keeps the candle chart on-chain).
+    function _record(uint8 kind) private {
+        priceHistory.push(PricePoint(uint32(block.timestamp), uint64(price()), kind));
+    }
+
     /// @notice Seed the pool with an initial token + USDT reserve (issuer only).
     ///         Establishes the starting price = reserveUsdt / reserveToken.
     function seed(uint256 tokenAmount, uint256 usdtAmount) external onlyIssuer {
@@ -56,6 +74,7 @@ contract SecondaryMarket {
         reserveToken += tokenAmount;
         reserveUsdt += usdtAmount;
         emit Seeded(msg.sender, tokenAmount, usdtAmount);
+        _record(0); // seed price point
     }
 
     /// @notice Current market price in USDT per 1e18 token unit.
@@ -90,6 +109,7 @@ contract SecondaryMarket {
         reserveToken -= tokenOut;
         totalBuyVolume += usdtIn;
         emit Swapped(msg.sender, true, tokenOut, usdtIn);
+        _record(1); // buy price point
     }
 
     /// @notice Sell token units for USDT. Price falls as the pool's token
@@ -104,5 +124,6 @@ contract SecondaryMarket {
         reserveUsdt -= usdtOut;
         totalSellVolume += tokenIn;
         emit Swapped(msg.sender, false, tokenIn, usdtOut);
+        _record(2); // sell price point
     }
 }

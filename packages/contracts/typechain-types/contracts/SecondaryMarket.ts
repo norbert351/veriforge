@@ -29,6 +29,8 @@ export interface SecondaryMarketInterface extends Interface {
       | "buy"
       | "issuer"
       | "price"
+      | "priceHistory"
+      | "priceHistoryCount"
       | "quoteTokenOut"
       | "quoteUsdtOut"
       | "reserveToken"
@@ -46,6 +48,14 @@ export interface SecondaryMarketInterface extends Interface {
   encodeFunctionData(functionFragment: "buy", values: [BigNumberish]): string;
   encodeFunctionData(functionFragment: "issuer", values?: undefined): string;
   encodeFunctionData(functionFragment: "price", values?: undefined): string;
+  encodeFunctionData(
+    functionFragment: "priceHistory",
+    values: [BigNumberish]
+  ): string;
+  encodeFunctionData(
+    functionFragment: "priceHistoryCount",
+    values?: undefined
+  ): string;
   encodeFunctionData(
     functionFragment: "quoteTokenOut",
     values: [BigNumberish]
@@ -81,6 +91,14 @@ export interface SecondaryMarketInterface extends Interface {
   decodeFunctionResult(functionFragment: "buy", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "issuer", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "price", data: BytesLike): Result;
+  decodeFunctionResult(
+    functionFragment: "priceHistory",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "priceHistoryCount",
+    data: BytesLike
+  ): Result;
   decodeFunctionResult(
     functionFragment: "quoteTokenOut",
     data: BytesLike
@@ -207,6 +225,14 @@ export interface SecondaryMarket extends BaseContract {
 
   price: TypedContractMethod<[], [bigint], "view">;
 
+  priceHistory: TypedContractMethod<
+    [arg0: BigNumberish],
+    [[bigint, bigint, bigint] & { ts: bigint; price: bigint; kind: bigint }],
+    "view"
+  >;
+
+  priceHistoryCount: TypedContractMethod<[], [bigint], "view">;
+
   quoteTokenOut: TypedContractMethod<[usdtIn: BigNumberish], [bigint], "view">;
 
   quoteUsdtOut: TypedContractMethod<[tokenIn: BigNumberish], [bigint], "view">;
@@ -243,6 +269,16 @@ export interface SecondaryMarket extends BaseContract {
   ): TypedContractMethod<[], [string], "view">;
   getFunction(
     nameOrSignature: "price"
+  ): TypedContractMethod<[], [bigint], "view">;
+  getFunction(
+    nameOrSignature: "priceHistory"
+  ): TypedContractMethod<
+    [arg0: BigNumberish],
+    [[bigint, bigint, bigint] & { ts: bigint; price: bigint; kind: bigint }],
+    "view"
+  >;
+  getFunction(
+    nameOrSignature: "priceHistoryCount"
   ): TypedContractMethod<[], [bigint], "view">;
   getFunction(
     nameOrSignature: "quoteTokenOut"

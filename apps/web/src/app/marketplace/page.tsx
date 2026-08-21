@@ -432,23 +432,23 @@ export default function Marketplace() {
     [loadIssuances, chainInfo.usdt]
   );
 
-  // Live secondary-market price for a given issuance (or null if unseeded).
-  const loadMarketPrice = useCallback(
-    async (iss: Issuance): Promise<string | null> => {
-      if (!iss.market) return null;
+  // Live secondary-market price + price history via the API market endpoint
+  // (returns price_usdt, reserve, and price_history for the candle chart).
+  const loadMarketData = useCallback(
+    async (iss: Issuance): Promise<{ price: string | null; history: { ts: number; price: string; kind: number }[] }> => {
+      if (!iss.market) return { price: null, history: [] };
       try {
-        const eth = getEth();
-        const provider = eth
-          ? new BrowserProvider(eth)
-          : new JsonRpcProvider(chainInfo.rpc);
-        const market = new Contract(iss.market, MARKET_ABI, provider);
-        const price = await market.price();
-        return price > 0n ? formatUnits(price, 6) : null;
+        const res = await fetch(`${API}/v1/issuances/${iss.id}/market?chainId=${selChain}`);
+        const d = await res.json();
+        return {
+          price: d?.price_usdt && parseFloat(d.price_usdt) ? d.price_usdt : null,
+          history: d?.price_history || [],
+        };
       } catch {
-        return null;
+        return { price: null, history: [] };
       }
     },
-    [chainInfo.rpc]
+    [selChain]
   );
 
   // Trade on the secondary market: buy units at the live (demand-driven) price.
@@ -790,7 +790,7 @@ export default function Marketplace() {
                   onTradeSell={(amt) => tradeSell(iss, amt)}
                   onSeed={(t, u) => seedMarket(iss, t, u)}
                   balanceHint={balanceHint}
-                  loadMarketPrice={loadMarketPrice}
+                  loadMarketData={loadMarketData}
                 />
               ))}
             </div>
@@ -820,7 +820,7 @@ function IssuanceCard({
   onTradeSell,
   onSeed,
   balanceHint,
-  loadMarketPrice,
+  loadMarketData,
 }: {
   iss: Issuance;
   connectedAddress?: `0x${string}`;
@@ -832,7 +832,7 @@ function IssuanceCard({
   onTradeSell: (amt: string) => void;
   onSeed: (token: string, usdt: string) => void;
   balanceHint: (iss: Issuance) => Promise<string>;
-  loadMarketPrice: (iss: Issuance) => Promise<string | null>;
+  loadMarketData: (iss: Issuance) => Promise<{ price: string | null; history: { ts: number; price: string; kind: number }[] }>;
 }) {
   const [amount, setAmount] = useState("10");
   const [depositAmt, setDepositAmt] = useState("50");
@@ -842,6 +842,7 @@ function IssuanceCard({
   const [seedTok, setSeedTok] = useState("");
   const [seedUsd, setSeedUsd] = useState("");
   const [marketPrice, setMarketPrice] = useState<string | null>(null);
+  const [marketHistory, setMarketHistory] = useState<{ ts: number; price: string; kind: number }[]>([]);
 
   // Only the declared on-chain issuer controls the revenue deposit row.
   const isIssuer =
@@ -860,18 +861,31 @@ function IssuanceCard({
     };
   }, [iss, balanceHint]);
 
-  // Load the live secondary-market price for this issuance.
+  // Load the live secondary-market price + price history for this issuance.
   useEffect(() => {
     let live = true;
     if (iss.market) {
-      loadMarketPrice(iss).then((p) => live && setMarketPrice(p));
+      loadMarketData(iss).then((d) => {
+        if (!live) return;
+        setMarketPrice(d.price);
+        setMarketHistory(d.history);
+      });
     }
     return () => {
       live = false;
     };
-  }, [iss, loadMarketPrice]);
+  }, [iss, loadMarketData]);
 
   const price = parseFloat(iss.pricePerTokenUsdt);
+
+  // Live units preview while typing a USDT amount (primary: amount / price;
+  // secondary: the pool quote).
+  const primaryUnits =
+    amount && price > 0 ? (parseFloat(amount) / price).toFixed(4) : null;
+  const tradeUnits =
+    tradeAmt && marketPrice && parseFloat(marketPrice) > 0
+      ? (parseFloat(tradeAmt) / parseFloat(marketPrice)).toFixed(4)
+      : null;
 
   return (
     <div className="gr-card" style={{ padding: "1.25rem 1.5rem" }}>
@@ -921,26 +935,31 @@ function IssuanceCard({
           {iss.payloadHash ? `docs committed ${iss.payloadHash.slice(0, 10)}…${iss.payloadHash.slice(-6)}` : "docs commitment on-chain"}
         </span>
       </div>
-      <div className="vf-row">
+      <div className="vf-row" style={{ gap: 8, flexWrap: "wrap" }}>
         <input value={amount} onChange={(e) => setAmount(e.target.value)} type="number" step="0.01" min="0" style={{ ...inputStyle, maxWidth: 130, flexBasis: 110 }} />
         <span style={{ fontSize: "0.8rem", color: "#9ca3af" }}>USDT</span>
         <button onClick={() => onBuy(amount)} style={btnStyle({})}>
           Buy
         </button>
-        {units && <span style={{ fontSize: "0.8rem", color: "#10b981" }}>{parseFloat(units).toFixed(2)} units held</span>}
-        {claimable !== undefined && parseFloat(claimable || "0") > 0 && (
-          <button onClick={onClaim} style={btnStyle({ outline: true })}>
-            Claim {claimable} USDT
-          </button>
-        )}
+        {primaryUnits && <span style={{ fontSize: "0.8rem", color: "#10b981" }}>≈ {primaryUnits} units</span>}
+        {units && <span style={{ fontSize: "0.8rem", color: "#9ca3af" }}>· {parseFloat(units).toFixed(2)} held</span>}
+        {hasDepositedRevenue &&
+          claimable !== undefined &&
+          parseFloat(claimable || "0") > 0 && (
+            <button onClick={onClaim} style={btnStyle({ outline: true })}>
+              Claim {claimable} USDT
+            </button>
+          )}
       </div>
-      <div className="vf-row" style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed #23233a", flexWrap: "wrap" }}>
-        <span style={{ fontSize: "0.75rem", color: "#9ca3af", whiteSpace: "nowrap" }}>
-          {hasDepositedRevenue
-            ? `Revenue deposited: ${iss.totalRevenueDeposited} USDT${iss.revenueDepositedBy ? ` · by ${iss.revenueDepositedBy.slice(0, 6)}…${iss.revenueDepositedBy.slice(-4)}` : ""}`
-            : "No revenue deposited yet"}
-        </span>
-        {isIssuer ? (
+      {/* Revenue — visible to the ISSUER only (they deposit); Claim appears to
+          holders only once revenue is actually deposited */}
+      {isIssuer && (
+        <div className="vf-row" style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed #23233a", flexWrap: "wrap" }}>
+          <span style={{ fontSize: "0.75rem", color: "#9ca3af", whiteSpace: "nowrap" }}>
+            {hasDepositedRevenue
+              ? `Revenue deposited: ${iss.totalRevenueDeposited} USDT${iss.revenueDepositedBy ? ` · by ${iss.revenueDepositedBy.slice(0, 6)}…${iss.revenueDepositedBy.slice(-4)}` : ""}`
+              : "No revenue deposited yet"}
+          </span>
           <>
             <input value={depositAmt} onChange={(e) => setDepositAmt(e.target.value)} type="number" step="0.01" min="0" style={{ ...inputStyle, maxWidth: 110, flexBasis: 90 }} />
             <span style={{ fontSize: "0.8rem", color: "#9ca3af" }}>USDT</span>
@@ -949,10 +968,8 @@ function IssuanceCard({
             </button>
             <span style={{ fontSize: "0.75rem", color: "#6b7280" }}>→ pro-rata to holders</span>
           </>
-        ) : (
-          <span style={{ fontSize: "0.72rem", color: "#4b5563" }}>· issuer-only control</span>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Secondary market — investors earn from price appreciation too */}
       <div className="vf-row" style={{ marginTop: 12, paddingTop: 12, borderTop: "1px dashed #2c2c47", flexDirection: "column", alignItems: "stretch", gap: 8 }}>
@@ -968,6 +985,12 @@ function IssuanceCard({
             </span>
           )}
         </div>
+
+        {/* K-line / candle chart of on-chain price history */}
+        {marketHistory.length > 0 && (
+          <MarketChart history={marketHistory} primaryPrice={price} />
+        )}
+
         {iss.market && (
           <>
             {isIssuer && marketPrice === null && (
@@ -978,6 +1001,18 @@ function IssuanceCard({
                 <button onClick={() => onSeed(seedTok, seedUsd)} style={btnStyle({ outline: true })}>
                   Seed
                 </button>
+                <button
+                  onClick={() => {
+                    // Seed at the SAME starting unit price as the primary issuance.
+                    const u = 10;
+                    setSeedTok(String(u));
+                    setSeedUsd(String((u * price).toFixed(2)));
+                  }}
+                  style={btnStyle({ outline: true })}
+                >
+                  Seed @ ${price.toFixed(2)}/unit
+                </button>
+                <span style={{ fontSize: "0.7rem", color: "#6b7280" }}>starts where primary does</span>
               </div>
             )}
             <div className="vf-row" style={{ gap: 8, flexWrap: "wrap" }}>
@@ -986,7 +1021,7 @@ function IssuanceCard({
               <button onClick={() => onTradeBuy(tradeAmt)} style={btnStyle({})}>
                 Buy
               </button>
-              <span style={{ fontSize: "0.72rem", color: "#6b7280" }}>at market</span>
+              {tradeUnits && <span style={{ fontSize: "0.8rem", color: "#10b981" }}>≈ {tradeUnits} units</span>}
               <input value={sellAmt} onChange={(e) => setSellAmt(e.target.value)} type="number" step="0.1" min="0" placeholder="units" style={{ ...inputStyle, maxWidth: 90, flexBasis: 70 }} />
               <button onClick={() => onTradeSell(sellAmt)} style={btnStyle({ outline: true })}>
                 Sell
@@ -995,6 +1030,73 @@ function IssuanceCard({
             </div>
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+// Lightweight on-chain candlestick / K-line chart for the secondary market.
+// Draws candles from the on-chain price history (each point: seed/buy/sell).
+function MarketChart({
+  history,
+  primaryPrice,
+}: {
+  history: { ts: number; price: string; kind: number }[];
+  primaryPrice: number;
+}) {
+  const W = 100, H = 48, PAD = 4;
+  const pts = history.map((h, i) => ({ i, price: parseFloat(h.price), ts: h.ts, kind: h.kind }));
+  const prices = [...pts.map((p) => p.price), primaryPrice];
+  const min = Math.min(...prices) * 0.98;
+  const max = Math.max(...prices) * 1.02;
+  const range = max - min || 1;
+  const x = (i: number) => PAD + (i / Math.max(1, pts.length - 1)) * (W - PAD * 2);
+  const y = (p: number) => H - PAD - ((p - min) / range) * (H - PAD * 2);
+  // Build candles: aggregate by index — open=prev close, close=this price,
+  // high/low = max/min of open,close (single-point candles).
+  let prev = primaryPrice;
+  const candles = pts.map((p) => {
+    const open = prev;
+    const close = p.price;
+    const up = close >= open;
+    const c = { ...p, open, close, high: Math.max(open, close), low: Math.min(open, close), up };
+    prev = close;
+    return c;
+  });
+  const cw = Math.max(3, (W - PAD * 2) / candles.length - 2);
+  return (
+    <div style={{ border: "1px solid #2c2c47", borderRadius: 10, padding: 8, background: "rgba(0,0,0,0.25)" }}>
+      <div className="vf-row" style={{ justifyContent: "space-between", marginBottom: 4 }}>
+        <span style={{ fontSize: "0.7rem", color: "#9ca3af" }}>Price · on-chain</span>
+        <span style={{ fontSize: "0.7rem", color: "#10b981" }}>
+          {pts.length} trade{pts.length === 1 ? "" : "s"} · primary ${primaryPrice.toFixed(2)}
+        </span>
+      </div>
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: "block" }}>
+        {candles.map((c, i) => {
+          const cx = x(i);
+          const upColor = "#10b981", dnColor = "#f87171";
+          const col = c.up ? upColor : dnColor;
+          return (
+            <g key={i}>
+              <line x1={cx} y1={y(c.high)} x2={cx} y2={y(c.low)} stroke={col} strokeWidth={1} />
+              <line
+                x1={cx - cw / 2} y1={y(c.open)} x2={cx + cw / 2} y2={y(c.open)}
+                stroke={col} strokeWidth={1}
+              />
+              <line
+                x1={cx - cw / 2} y1={y(c.close)} x2={cx + cw / 2} y2={y(c.close)}
+                stroke={col} strokeWidth={2}
+              />
+            </g>
+          );
+        })}
+        <line x1={PAD} y1={y(primaryPrice)} x2={W - PAD} y2={y(primaryPrice)} stroke="#c4b5fd" strokeDasharray="3,2" strokeWidth={0.8} />
+      </svg>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.62rem", color: "#6b7280", marginTop: 2 }}>
+        <span>${min.toFixed(2)}</span>
+        <span>primary ${primaryPrice.toFixed(2)}</span>
+        <span>${max.toFixed(2)}</span>
       </div>
     </div>
   );
