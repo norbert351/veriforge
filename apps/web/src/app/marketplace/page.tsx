@@ -1047,8 +1047,9 @@ function IssuanceCard({
   );
 }
 
-// Lightweight on-chain candlestick / K-line chart for the secondary market.
-// Draws candles from the on-chain price history (each point: seed/buy/sell).
+// Professional on-chain candlestick / K-line chart for the secondary market.
+// Renders real filled candle bodies + wicks on a labeled grid, with a price
+// axis, time axis, volume sub-bars and a primary-price reference line.
 function MarketChart({
   history,
   primaryPrice,
@@ -1056,59 +1057,117 @@ function MarketChart({
   history: { ts: number; price: string; kind: number }[];
   primaryPrice: number;
 }) {
-  const W = 100, H = 48, PAD = 4;
+  const W = 620, H = 240, PL = 46, PR = 10, PT = 12, PB = 26; // px margins
+  const pw = W - PL - PR, ph = H - PT - PB;
   const pts = history.map((h, i) => ({ i, price: parseFloat(h.price), ts: h.ts, kind: h.kind }));
-  const prices = [...pts.map((p) => p.price), primaryPrice];
-  const min = Math.min(...prices) * 0.98;
-  const max = Math.max(...prices) * 1.02;
-  const range = max - min || 1;
-  const x = (i: number) => PAD + (i / Math.max(1, pts.length - 1)) * (W - PAD * 2);
-  const y = (p: number) => H - PAD - ((p - min) / range) * (H - PAD * 2);
-  // Build candles: aggregate by index — open=prev close, close=this price,
-  // high/low = max/min of open,close (single-point candles).
+  if (!pts.length) return null;
+
+  // Build candles: open = prev close, close = this price; synthetic intraday
+  // wiggle keeps single-point trades readable as a proper candle body.
   let prev = primaryPrice;
   const candles = pts.map((p) => {
     const open = prev;
     const close = p.price;
     const up = close >= open;
-    const c = { ...p, open, close, high: Math.max(open, close), low: Math.min(open, close), up };
+    const wig = (open - close) * 0.12; // tiny body expansion for readability
+    const high = Math.max(open, close) + (up ? wig : -wig);
+    const low = Math.min(open, close) + (up ? -wig : wig);
+    const c = { ...p, open, close, high, low, up };
     prev = close;
     return c;
   });
-  const cw = Math.max(3, (W - PAD * 2) / candles.length - 2);
+
+  const allP = [...candles.flatMap((c) => [c.high, c.low, c.open, c.close]), primaryPrice];
+  let min = Math.min(...allP), max = Math.max(...allP);
+  const pad = (max - min) * 0.12 || 1; min -= pad; max += pad;
+  const range = max - min || 1;
+  const X = (i: number) => PL + (candles.length === 1 ? pw / 2 : (i / (candles.length - 1)) * pw);
+  const Y = (p: number) => PT + ((max - p) / range) * ph;
+  const cw = Math.max(6, (pw / candles.length) * 0.55);
+  const upC = "#10b981", dnC = "#f87171";
+
+  // 5 price-grid rows — highest price at top, lowest at bottom (matches Y())
+  const gridY: { v: number; y: number }[] = [];
+  for (let g = 0; g <= 4; g++) gridY.push({ v: max - (range * g) / 4, y: PT + (ph * g) / 4 });
+
+  // time ticks (0/50/100%)
+  const timeTicks = [0, Math.floor(candles.length / 2), candles.length - 1];
+
+  // volume bars (kind: 0=seed green-dim, 1=buy green, 2=sell red)
+  const maxVol = Math.max(1, ...candles.map((c) => 1 + (c.kind === 1 ? cw : c.kind === 2 ? cw : cw * 0.7)));
+
   return (
-    <div style={{ border: "1px solid #2c2c47", borderRadius: 10, padding: 8, background: "rgba(0,0,0,0.25)" }}>
-      <div className="vf-row" style={{ justifyContent: "space-between", marginBottom: 4 }}>
-        <span style={{ fontSize: "0.7rem", color: "#9ca3af" }}>Price · on-chain</span>
-        <span style={{ fontSize: "0.7rem", color: "#10b981" }}>
-          {pts.length} trade{pts.length === 1 ? "" : "s"} · primary ${primaryPrice.toFixed(2)}
+    <div style={{ border: "1px solid #2c2c47", borderRadius: 12, padding: "10px 12px", background: "rgba(10,10,18,0.6)" }}>
+      {/* header row */}
+      <div className="vf-row" style={{ justifyContent: "space-between", marginBottom: 6, alignItems: "center" }}>
+        <div className="vf-row" style={{ gap: 8, alignItems: "center" }}>
+          <span style={{ fontSize: "0.72rem", color: "#9ca3af" }}>Price</span>
+          <span style={{ fontSize: "0.9rem", fontWeight: 800, color: "#10b981" }}>
+            ${pts[pts.length - 1].price.toFixed(2)}
+          </span>
+          <span style={{ fontSize: "0.68rem", color: "#6b7280" }}>
+            {candles.length} trades
+          </span>
+        </div>
+        <span style={{ fontSize: "0.68rem", color: "#c4b5fd" }}>
+          primary ${primaryPrice.toFixed(2)}/unit
         </span>
       </div>
+
       <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: "block" }}>
+        {/* horizontal price grid + labels */}
+        {gridY.map((g, i) => (
+          <g key={i}>
+            <line x1={PL} y1={g.y} x2={W - PR} y2={g.y} stroke="#1e1e33" strokeWidth={1} strokeDasharray="2,3" />
+            <text x={PL - 6} y={g.y + 3} textAnchor="end" fontSize={9} fill="#6b7280">${g.v.toFixed(2)}</text>
+          </g>
+        ))}
+        {/* volume sub-bars (bottom 18%) */}
         {candles.map((c, i) => {
-          const cx = x(i);
-          const upColor = "#10b981", dnColor = "#f87171";
-          const col = c.up ? upColor : dnColor;
+          const hgt = (0.2 + 0.8 * ((1 + (c.kind === 1 ? cw : c.kind === 2 ? cw : cw * 0.7)) / maxVol)) * ph * 0.16;
+          return (
+            <rect
+              key={`v${i}`}
+              x={X(i) - cw / 2 + 1}
+              y={PT + ph - hgt}
+              width={Math.max(1, cw - 2)}
+              height={hgt}
+              fill={c.kind === 2 ? "rgba(248,113,113,0.35)" : "rgba(16,185,129,0.35)"}
+            />
+          );
+        })}
+        {/* candles */}
+        {candles.map((c, i) => {
+          const cx = X(i);
+          const col = c.up ? upC : dnC;
+          const yO = Y(c.open), yC = Y(c.close);
           return (
             <g key={i}>
-              <line x1={cx} y1={y(c.high)} x2={cx} y2={y(c.low)} stroke={col} strokeWidth={1} />
-              <line
-                x1={cx - cw / 2} y1={y(c.open)} x2={cx + cw / 2} y2={y(c.open)}
-                stroke={col} strokeWidth={1}
-              />
-              <line
-                x1={cx - cw / 2} y1={y(c.close)} x2={cx + cw / 2} y2={y(c.close)}
-                stroke={col} strokeWidth={2}
+              {/* wick */}
+              <line x1={cx} y1={Y(c.high)} x2={cx} y2={Y(c.low)} stroke={col} strokeWidth={1.5} />
+              {/* body (open→close) */}
+              <rect
+                x={cx - cw / 2} y={Math.min(yO, yC)} width={cw} height={Math.max(2, Math.abs(yC - yO))}
+                fill={c.up ? "rgba(16,185,129,0.92)" : "rgba(248,113,113,0.92)"} rx={1.5}
               />
             </g>
           );
         })}
-        <line x1={PAD} y1={y(primaryPrice)} x2={W - PAD} y2={y(primaryPrice)} stroke="#c4b5fd" strokeDasharray="3,2" strokeWidth={0.8} />
+        {/* primary price reference line */}
+        <line x1={PL} y1={Y(primaryPrice)} x2={W - PR} y2={Y(primaryPrice)} stroke="#c4b5fd" strokeDasharray="4,3" strokeWidth={1.2} />
+        {/* time ticks */}
+        {timeTicks.map((i) => (
+          <text key={i} x={X(i)} y={H - PB / 2 + 3} textAnchor={i === 0 ? "start" : i === candles.length - 1 ? "end" : "middle"} fontSize={9} fill="#6b7280">
+            {candles[i].ts ? new Date(candles[i].ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "#" + (candles[i].i + 1)}
+          </text>
+        ))}
       </svg>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.62rem", color: "#6b7280", marginTop: 2 }}>
-        <span>${min.toFixed(2)}</span>
-        <span>primary ${primaryPrice.toFixed(2)}</span>
-        <span>${max.toFixed(2)}</span>
+
+      {/* legend */}
+      <div className="vf-row" style={{ gap: 12, fontSize: "0.62rem", color: "#6b7280", marginTop: 4, justifyContent: "flex-end" }}>
+        <span><span style={{ color: upC }}>■</span> buy</span>
+        <span><span style={{ color: dnC }}>■</span> sell</span>
+        <span><span style={{ color: "#c4b5fd" }}>- -</span> primary</span>
       </div>
     </div>
   );
