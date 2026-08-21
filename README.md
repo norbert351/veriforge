@@ -4,9 +4,11 @@
 
 VeriForge is the issuance and revenue layer for tokenized real-world assets on BOT Chain. An issuer documents a real asset, the VeriForge AI compliance officer reviews it and produces a dossier with a 0-100 score, and only APPROVED issuances get listed on-chain. Investors buy units with USDT, revenue is deposited into a distributor, and holders claim their pro-rata share. The platform holds no funds.
 
-**Live on Bohr testnet (chain 968)** with the full loop verified on-chain. Targeting BOT mainnet (chain 677).
+**Live on BOT mainnet (chain 677)** with real AI-gated issuances, a working
+secondary market, and an on-chain price chart; the full loop is verified
+on-chain. Bohr testnet (968) is also live for development.
 
-Built for the **BOT Chain Builder Challenge #2 (AI × RWA)**, deadline Aug 20 2026.
+Built for the **BOT Chain Builder Challenge #2 (AI × RWA)**.
 
 ## Why this problem
 
@@ -39,7 +41,7 @@ The IssuanceRegistry calls the AttestationRegistry and reverts with `NotApproved
 
 ## The AI gate
 
-`apps/api/src/compliance.ts` sends the issuer's documentation to a real LLM and parses a structured dossier. Score >= 70 is APPROVED, 40-69 CAUTION, < 40 BLOCKED. If the LLM is unreachable the request fails loudly. No documentation at all scores 0 automatically. The gate runs on a single LLM rail, **Gemini** (`GEMINI_API_KEY` / `GEMINI_MODEL`, default `gemini-flash-latest`), and the dossier records which model produced the verdict — no silent substitution. The verdict is stored on-chain in the AttestationRegistry and visible on every marketplace card.
+`apps/api/src/compliance.ts` sends the issuer's documentation to a real LLM and parses a structured dossier. Score >= 70 is APPROVED, 40-69 CAUTION, < 40 BLOCKED. If the LLM is unreachable the request fails loudly. No documentation at all scores 0 automatically. The gate runs on **Gemini** (`GEMINI_API_KEY` / `GEMINI_MODEL`, default `gemini-3.7-flash`) with an **OpenRouter fallback rail** (`OPENROUTER_API_KEY`, `gpt-4o-mini`) so approvals still land even when the free-tier daily quota is exhausted; blank `GEMINI_API_KEY` to force the fallback. The dossier records which model produced the verdict — no silent substitution. The verdict is stored on-chain in the AttestationRegistry and visible on every marketplace card.
 
 ## API
 
@@ -161,24 +163,57 @@ a **demand-driven market price** on top of the fixed primary issuance:
   a real market, not a fixed price.
 - **Trade UI** — each card shows the live price and a Buy/Sell control (issuer
   sees a Seed control until the pool is seeded).
-- Contract: `SecondaryMarket.sol` (33 contract tests passing, incl. the
-  demand-driven price tests).
+- Contract: `SecondaryMarket.sol` (**34 contract tests passing**, incl. the
+  demand-driven price tests and the on-chain price-history / candle-feed test).
 
 Design goal met: the clean primary raise (payment to issuer) is unchanged; the
 market sits on top, so investors earn from **both** project revenue and price
 increase.
 
+## Live mainnet state (verified on-chain, chain 677)
+
+Mirrored by the API's `/v1/issuances?chainId=677` and visible in the web
+Marketplace on the **Mainnet** toggle. As of this read:
+
+- **IssuanceRegistry (`0x9369…65`): real mainnet issuances live**, deduplicated
+  in the API so the marketplace shows **one clean card per asset** — the most
+  active live issuance (chart-capable new contract + real supply) wins.
+- **LLWF (Lagos Logistics Warehouse Fund) — live on mainnet** with a
+  **new-contract SecondaryMarket** that records **on-chain price history** and
+  renders a **live candlestick / K-line chart** on the card:
+  - Primary **$10.00/unit**; secondary market seeded at $10, then traded to a
+    live price by real demand (the on-chain chart shows the candle history).
+  - **AI gate · 100/100 · APPROVED**, committed docs payloadHash on-chain.
+  - Full loop executed on mainnet: x402 pay → AI gate → deploy → list → buy →
+    revenue → claim → **seed + trade the secondary market**.
+
+## Web — both primary and secondary, clearly labeled
+
+Each marketplace card now separates the two rails with clear headers:
+
+- **• Primary issuance · buy units for USDT** — fixed offering price, with a
+  live **units preview** (`≈ X.XXXX units`) as you type a USDT amount.
+- **• Secondary market · trade at live price** — live demand-driven price,
+  on-chain candle chart (grid, price axis, time axis, volume, candlesticks),
+  and Buy/Sell at market with a live units preview.
+
+**Revenue / claim controls are role-gated and truthful:**
+
+- The **revenue deposit row is shown only to the issuer** of that asset.
+- The **Claim** button appears **only to a non-issuer holder**, and **only once
+  revenue has actually been deposited** — no mock claim, no self-claim.
+
 ## Roadmap
 
-VeriForge ships the issuance rail and the secondary market today. The next
-upgrade keeps the "platform holds no funds" and "AI-gated, on-chain"
-guarantees at the center:
+VeriForge ships the issuance rail, the secondary market, and the on-chain
+price chart today. The next upgrade keeps the "platform holds no funds" and
+"AI-gated, on-chain" guarantees at the center:
 
-### 1. Automated revenue verification & distribution
-The secondary market is shipped. Next, revenue moves from *self-reported* to
-*verifiable*:
-
-- **Revenue oracle / verification rail** — cross-check the issuer's declared
+### 1. Richer market data & automation
+- **Market history depth** — keep on-chain price points fresh as trades land
+  (the candle chart is already fed from `SecondaryMarket.priceHistory`); add a
+  consolidated multi-asset overview and per-unit depth view.
+- **Automated revenue verification** — cross-check the issuer's declared
   revenue against a live data source (invoicing, payment-settlement, or a
   custody/webhook feed) before a deposit is recognized, so a judge or auditor
   can see *why* a payout is legitimate — not just that it happened.
@@ -187,19 +222,6 @@ The secondary market is shipped. Next, revenue moves from *self-reported* to
   issuer-deposit step for qualifying issuers.
 - **Vested / escrowed revenue** — enabled for issuers who want provable custody
   of declared earnings.
-
-## Live mainnet state (verified on-chain, chain 677)
-
-Mirrored by the API's `/v1/issuances?chainId=677` and visible in the web
-Marketplace on the **Mainnet** toggle. As of this read:
-
-- **IssuanceRegistry (`0x9369…65`) count: 2 real mainnet issuances**
-  - **#1** token `0x696d…c275`
-  - **#2 LLWF (Lagos Logistics Warehouse Fund)** token `0x1bD0…F8EE` with a
-    **live SecondaryMarket** at `0x48D1…5C4` — **price $5.00/unit** on chain
-- **AI gate approved both** (verdict written on-chain) and the committed
-  payloadHash matches the attestation — full buy → revenue → claim →
-  secondary-market loop executed on mainnet.
 
 ## BOT Chain facts
 
