@@ -852,6 +852,15 @@ function IssuanceCard({
   const hasDepositedRevenue =
     iss.totalRevenueDeposited !== undefined &&
     parseFloat(iss.totalRevenueDeposited || "0") > 0;
+  // Claim is for HOLDERS who are not the issuer. The issuer deposited the
+  // revenue — showing a Claim to them reads as a mock, so we hide it there.
+  const isHolder = !!connectedAddress && !!units && parseFloat(units) > 0;
+  const showClaim =
+    hasDepositedRevenue &&
+    !isIssuer &&
+    isHolder &&
+    claimable !== undefined &&
+    parseFloat(claimable || "0") > 0;
 
   useEffect(() => {
     let live = true;
@@ -943,13 +952,11 @@ function IssuanceCard({
         </button>
         {primaryUnits && <span style={{ fontSize: "0.8rem", color: "#10b981" }}>≈ {primaryUnits} units</span>}
         {units && <span style={{ fontSize: "0.8rem", color: "#9ca3af" }}>· {parseFloat(units).toFixed(2)} held</span>}
-        {hasDepositedRevenue &&
-          claimable !== undefined &&
-          parseFloat(claimable || "0") > 0 && (
-            <button onClick={onClaim} style={btnStyle({ outline: true })}>
-              Claim {claimable} USDT
-            </button>
-          )}
+        {showClaim && (
+          <button onClick={onClaim} style={btnStyle({ outline: true })}>
+            Claim {claimable} USDT
+          </button>
+        )}
       </div>
       {/* Revenue — visible to the ISSUER only (they deposit); Claim appears to
           holders only once revenue is actually deposited */}

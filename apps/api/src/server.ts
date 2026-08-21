@@ -187,13 +187,23 @@ app.get("/v1/issuances", async (req, reply) => {
   const provider = getProvider(chainId);
   const registry = new ethers.Contract(cfg.issuanceRegistry, ISSUANCE_ABI, provider);
   const count = Number(await registry.count());
-  const out: any[] = [];
+  const all: any[] = [];
   for (let i = 1; i <= count; i++) {
-    out.push(await hydrateIssuance(registry, provider, i, chainId));
+    all.push(await hydrateIssuance(registry, provider, i, chainId));
+  }
+  // Deduplicate by asset symbol — a real marketplace lists one card per asset.
+  // If an asset was launched more than once (e.g. a test re-run), keep the
+  // newest live issuance and hide the older identical duplicates.
+  const seen = new Set<string>();
+  const out: any[] = [];
+  for (const iss of [...all].reverse()) {
+    const key = `${(iss.symbol || "").toUpperCase()}|${(iss.issuer || "").toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(iss);
   }
   // newest first — the latest live issuance is the first card a judge sees
-  out.reverse();
-  return { chainId, count, issuances: out };
+  return { chainId, count: out.length, issuances: out };
 });
 
 app.get("/v1/issuances/:id", async (req, reply) => {
