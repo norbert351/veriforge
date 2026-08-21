@@ -136,7 +136,15 @@ Verified against the [BOT Chain Project Integration Guide](https://dev-docs.botc
 
 ## Web
 
-Next.js 15 + RainbowKit (wagmi v2) wallet model. BOT Chain 968/677 is a first-class wagmi chain, so connect, chain switch, and account state are all provider-managed — no raw `window.ethereum` plumbing. The web calls the API directly at `NEXT_PUBLIC_API_URL` (CORS-enabled), so it deploys on any static host (Netlify, Vercel) with no proxy requirement.
+Next.js 15 + RainbowKit (wagmi v2) wallet model. BOT Chain 968/677 is a
+first-class wagmi chain, so connect, chain switch, and account state are all
+provider-managed — no raw `window.ethereum` plumbing. The web calls the API
+directly at `NEXT_PUBLIC_API_URL` (CORS-enabled), so it deploys on any static
+host (Netlify, Vercel) with no proxy requirement.
+
+**Live frontend: https://veri-forge.netlify.app** (deployed statically, talks
+to the live API). Visit the **Marketplace** → toggle **Mainnet** to see the
+live LLWF issuance with its on-chain candle chart.
 
 ![VeriForge marketplace with live issuances](docs/marketplace.png)
 

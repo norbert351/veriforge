@@ -39,3 +39,9 @@ The chain that ships the compliant issuance rail first defines how the asset sid
 - **AI + API**: the compliance gate and the x402 payment flow
 - **Frontend**: the investor market and issuer launch experience
 - **Growth**: finding the first real issuers and assets, learning what they actually need
+
+## Live deployment
+
+- **Live app:** https://veri-forge.netlify.app  (Marketplace → toggle **Mainnet**)
+- **Live API:** https://veriforge-5w80.onrender.com
+- **On-chain (BOT mainnet 677):** AttestationRegistry `0xF7ed39F4401062d9A5c45B7583d299887c5Cd560` · IssuanceRegistry `0x9369c520DcE7DA60aB9B0EafcD618d8F3416ae65` · explorer scan.botchain.ai
